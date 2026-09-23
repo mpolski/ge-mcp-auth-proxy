@@ -28,11 +28,6 @@ The included `deploy.sh` script automates enabling GCP APIs, creating least-priv
 > `carta` and `greenhouse` are preset profiles; any other name is accepted but you must
 > supply `UPSTREAM_AUTH_URL`, `UPSTREAM_TOKEN_URL` and `UPSTREAM_MCP_URL` yourself.
 
-> [!NOTE]
-> Verification status: the Metaview profile has been tested end-to-end against a live
-> Gemini Enterprise connector on 2026-09-23. Carta and Greenhouse are configured from
-> their published OAuth discovery documents but have NOT been verified against a live
-> tenant.
 
 ### Deploy Metaview
 ```bash
@@ -391,5 +386,6 @@ gcloud run services update-traffic "${SERVICE_NAME}" \
 | All `/mcp` calls return `401` | `PROXY_BASE_URL` not applied in step 7, so sign-in redirects never complete | Run step 7 with the real service URL. |
 | Sign-in fails with invalid redirect URI | Step 6 not run, or run before the service URL existed | Re-run Dynamic Client Registration with `${SERVICE_URL}/oauth/callback`, then apply the returned client ID. |
 | Traces missing in Cloud Trace | `roles/cloudtrace.agent` not granted, or `GCP_PROJECT_NUMBER` unset | Grant the role (step 3) and set `GCP_PROJECT_NUMBER`. |
+| A newly set environment variable has no effect, but `gcloud run services describe` shows it configured | `--update-env-vars` sets the variable but does not ship new code. If the running image predates the setting, nothing reads it. | Redeploy the image with `gcloud run deploy --source .`, then verify by exercising the behaviour rather than by re-reading the config. |
 | `/test` returns 404 | Expected. The test console is enabled for local development only. | No action. |
 | `POST /oauth/token` returns `400 invalid_grant` with `PKCE verification failed` | Gemini Enterprise replayed a stale `code_challenge`. | Remove and re-add the connector to force a fresh PKCE pair. The broker logs the expected and computed challenge so you can confirm. |

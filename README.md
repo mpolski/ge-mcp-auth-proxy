@@ -5,7 +5,7 @@
 [![Google Cloud Run](https://img.shields.io/badge/Google%20Cloud-Run-4285F4.svg?logo=googlecloud&logoColor=white)](https://cloud.google.com/run)
 [![Secret Manager](https://img.shields.io/badge/Google%20Cloud-Secret%20Manager-34A853.svg?logo=googlecloud&logoColor=white)](https://cloud.google.com/secret-manager)
 
-An enterprise OAuth 2.0 identity broker and Model Context Protocol (MCP) runtime proxy connecting **Gemini Enterprise (Vertex AI Search / Discovery Engine)** to any OAuth-secured MCP SaaS provider (**Metaview.ai**, **Carta**, **Greenhouse**, etc.), with strict per-user data isolation.
+An enterprise OAuth 2.0 identity broker and Model Context Protocol (MCP) runtime proxy connecting **Gemini Enterprise** to any OAuth-secured MCP SaaS provider (**Metaview.ai**, **Carta**, **Greenhouse**, etc.), with strict per-user data isolation.
 
 Runs entirely on Google Cloud Run and Google Cloud Secret Manager. No third-party infrastructure or external databases required.
 
@@ -17,7 +17,7 @@ Runs entirely on Google Cloud Run and Google Cloud Secret Manager. No third-part
 |---|---|
 | **[Architecture](docs/ARCHITECTURE.md)** | Why the proxy is needed, request flows, multi-vendor isolation model |
 | **[Deployment](docs/DEPLOYMENT.md)** | Step-by-step gcloud runbook, multi-vendor presets, Gemini Enterprise setup |
-| **[Security](docs/SECURITY.md)** | Threat model, per-user token isolation, Secret Manager TTLs, resolved issues |
+| **[Security](docs/SECURITY.md)** | Threat model, controls, per-user token isolation, Secret Manager TTLs, session revocation |
 | **[Testing](docs/TESTING.md)** | Unit test suite and live MCP tool verification |
 | **[Agent Registry](docs/AGENT_REGISTRY.md)** | Optional: publishing the broker to the Gemini Enterprise tool catalog |
 
@@ -40,38 +40,13 @@ authenticates against. Nothing sits in between.
 Registering in [Agent Registry](docs/AGENT_REGISTRY.md) is **optional** and only
 affects catalog discoverability. It does not change the traffic path.
 
-### Verification status
-
-Being explicit about what has actually been exercised against a live system:
-
-| Claim | Status |
-|---|---|
-| End-to-end OAuth sign-in through Gemini Enterprise | **Verified** against a live connector, 2026-09-23 |
-| Per-user token isolation with concurrent users | **Verified** with two distinct users |
-| Live `tools/call` returning upstream data | **Verified** against Metaview |
-| Metaview endpoint configuration | **Verified** by end-to-end use |
-| Carta and Greenhouse endpoint configuration | **Verified** from provider OAuth discovery documents; **not yet run end to end** |
-| Routing via Agent Gateway | **Out of scope** for this release |
-
-> [!NOTE]
-> The Carta and Greenhouse profiles ship with endpoints read from each provider's
-> own RFC 8414 / RFC 9728 metadata, so the URLs are correct. What has not happened
-> is a full sign-in against a real tenant of either, which needs an account. Expect
-> to discover tenant-specific details on first run.
-
-> [!IMPORTANT]
-> There is no running reference deployment. The environment used for the
-> verification above has been torn down, so nothing here is live and no
-> credentials, project IDs or service URLs from it remain in this repository.
-> Deploy into your own project with your own client registrations.
-
 ---
 
 ## Enterprise Governance Meets Desktop-Centric Protocols
 
 ### Architectural Context
 
-**Gemini Enterprise (Vertex AI Search / Discovery Engine)** enforces enterprise-grade security, identity governance, and compliance:
+**Gemini Enterprise** enforces enterprise-grade security, identity governance, and compliance:
 - Utilizes pre-registered, audited OAuth 2.0 client credentials (RFC 6749) and PKCE verification (RFC 7636).
 - Operates a standardized, centrally managed enterprise redirect URI (`https://vertexaisearch.cloud.google.com/oauth-redirect`) to prevent unauthorized domain redirection.
 - Enforces strict per-user identity boundaries so conversational AI queries never leak confidential records across organizational roles.

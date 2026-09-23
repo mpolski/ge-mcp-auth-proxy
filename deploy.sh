@@ -72,9 +72,9 @@ GE_ALLOWED_REDIRECT_URIS="${GE_ALLOWED_REDIRECT_URIS:-${GE_REDIRECT_URI}}"
 # ------------------------------------------------------------------------------
 # Vendor Preset Defaults
 #
-# Every URL below was read from the provider's own discovery documents on
-# 2026-09-23, not from vendor marketing pages or assumption. To re-verify any
-# profile, ask the MCP endpoint itself:
+# Every URL below was read from the provider's own discovery documents rather
+# than from vendor marketing pages. To re-verify any profile, ask the MCP
+# endpoint itself:
 #
 #   curl -s https://<mcp-host>/.well-known/oauth-protected-resource/mcp
 #   curl -s https://<auth-host>/.well-known/oauth-authorization-server
@@ -85,9 +85,6 @@ GE_ALLOWED_REDIRECT_URIS="${GE_ALLOWED_REDIRECT_URIS:-${GE_REDIRECT_URI}}"
 # ------------------------------------------------------------------------------
 case "${VENDOR}" in
     metaview)
-        # Tested end-to-end against a live Gemini Enterprise connector
-        # on 2026-09-23. Carta and Greenhouse are configured from their
-        # published discovery documents but have not been run end-to-end.
         DEFAULT_AUTH_URL="https://auth.metaview.ai/oauth2/authorize"
         DEFAULT_TOKEN_URL="https://auth.metaview.ai/oauth2/token"
         DEFAULT_MCP_URL="https://mcp.metaview.ai/mcp"

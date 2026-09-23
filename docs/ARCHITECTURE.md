@@ -32,7 +32,7 @@ Integrating enterprise AI platforms with external Model Context Protocol (MCP) s
 ```
 
 ### 1.1 Gemini Enterprise's Paradigm: Enterprise Governance & Identity Boundaries
-Gemini Enterprise is designed for corporate enterprise environments serving employees across Google Workspace and Vertex AI Search:
+Gemini Enterprise is designed for corporate enterprise environments serving employees across an organization:
 - **Pre-Provisioned, Audited Credentials:** Gemini Enterprise operates under standard **RFC 6749 / RFC 7636 (PKCE)** OAuth models. Enterprise IT and SecOps teams configure pre-approved, audited client credentials in Google Cloud Console, preventing unauthorized shadow IT applications from accessing enterprise tenants.
 - **Centrally Managed Enterprise Redirect URI:** Google uses a standardized, secure redirect URI across enterprise deployments (`https://vertexaisearch.cloud.google.com/oauth-redirect`). This ensures all authorization code redirects terminate exclusively on Google-managed, verified endpoints.
 - **Strict Per-User Identity & Data Isolation:** Gemini Enterprise binds conversational AI queries to the authenticated employee's corporate identity, ensuring that queries only return data the individual user has legitimate clearance to view.
@@ -83,7 +83,7 @@ Rather than running a monolithic multi-tenant broker that routes to multiple Saa
    Each vendor instance operates within its own dedicated Secret Manager prefix. `deploy.sh` derives it as `ge-<first four characters of VENDOR>`, so the presets produce `ge-meta-*` for Metaview, `ge-cart-*` for Carta and `ge-gree-*` for Greenhouse. It can be overridden with `SECRET_PREFIX`; the application default when nothing is set is `ge-mcp`. This prevents cross-service credential leakage and simplifies compliance auditing.
 
 3. **1:1 Alignment with Gemini Enterprise MCP Registrations:**
-   In Gemini Enterprise / Vertex AI Search, each Custom MCP Server is registered with a distinct tuple:
+   In Gemini Enterprise, each Custom MCP Server is registered with a distinct tuple:
    - MCP Server URL: `https://<service-url>/mcp`
    - Authorization URL: `https://<service-url>/oauth/authorize`
    - Token URL: `https://<service-url>/oauth/token`
@@ -105,10 +105,6 @@ Rather than running a monolithic multi-tenant broker that routes to multiple Saa
 > The diagrams in this section use Metaview as a **worked example**, not as the
 > product. The flow is identical for any OAuth 2.0 + PKCE MCP provider — substitute
 > that provider's own authorization, token and MCP endpoints.
->
-> Verification status: Metaview has been tested end-to-end. Carta and Greenhouse are
-> configured from their published OAuth discovery documents but have NOT been verified
-> against a live tenant.
 
 ```
 +------------------+         +-------------------------------------------------------------+         +---------------------+
@@ -176,7 +172,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant GE as Discovery Engine Backend
+    participant GE as Gemini Enterprise Backend
     participant Proxy as Identity Broker Proxy
     participant SM as Google Cloud Secret Manager
 
@@ -263,9 +259,7 @@ The stored token record uses vendor-neutral field names — `upstream_access_tok
 > This section is **one worked example**, not universal MCP behaviour. It documents the
 > specific quirks encountered integrating Metaview, because they illustrate the class of
 > problem this broker solves. Carta and Greenhouse have different endpoints, scopes and
-> auth methods — see the presets in [`deploy.sh`](../deploy.sh). Those presets were read
-> from each provider's published OAuth discovery documents; only Metaview has been
-> tested end-to-end against a live tenant.
+> auth methods — see the presets in [`deploy.sh`](../deploy.sh).
 >
 > Every provider's real configuration should be read from its own discovery documents:
 >
@@ -350,7 +344,7 @@ When redirecting the user to Metaview, the proxy initiates standard OAuth 2.1 au
 
 ### Metaview Service 4: MCP Gateway Protocols & Caveats (Metaview Vendor SaaS)
 
-Metaview's external MCP gateway (`https://mcp.metaview.ai/mcp`) is built on **Metaview's proprietary AWS infrastructure**, fronted by **AWS API Gateway** with a custom **Lambda Authorizer** (this proxy runs entirely on Google Cloud and connects to Metaview over HTTPS). End-to-end testing on 2026-09-23 identified the following vendor gateway behaviours, each handled by the proxy:
+Metaview's external MCP gateway (`https://mcp.metaview.ai/mcp`) is built on **Metaview's proprietary AWS infrastructure**, fronted by **AWS API Gateway** with a custom **Lambda Authorizer** (this proxy runs entirely on Google Cloud and connects to Metaview over HTTPS). The following vendor gateway behaviours are each handled by the proxy:
 
 #### 1. The `Origin` Header Rejection (HTTP 403)
 - **Problem:** If a request contains browser headers such as `Origin: http://localhost:8080` or `Referer: ...`, Metaview's API Gateway immediately aborts with:
@@ -386,18 +380,11 @@ Metaview's external MCP gateway (`https://mcp.metaview.ai/mcp`) is built on **Me
 
 #### 4. Tool Arguments & Schema Enforcement
 
-> [!WARNING]
-> **Unverified.** An earlier revision of this document stated that Metaview tools use
-> `additionalProperties: false` and that sensitive tools such as `search_conversations`
-> and `get_user_context` strictly require a `rationale: str` argument.
->
-> That claim was never checked against a live `tools/list`, and it **contradicts the
-> shipped [`toolspec.json`](../toolspec.json)**, which declares every tool with
-> `additionalProperties: true`, no `required` array, and no `rationale` property.
->
-> Observed behaviour favours the toolspec: live `tools/call` requests through this
-> broker returned data without supplying `rationale`. Treat the upstream schema as
-> unknown until you confirm it:
+> [!IMPORTANT]
+> Argument schemas are defined by the provider and change without notice. Read them
+> from a live `tools/list` rather than from this document or from
+> [`toolspec.json`](../toolspec.json), which is a curated allowlist and not a
+> schema source of truth:
 >
 > ```bash
 > curl -s -X POST "${SERVICE_URL}/mcp" \
@@ -415,10 +402,8 @@ Metaview's external MCP gateway (`https://mcp.metaview.ai/mcp`) is built on **Me
 ### Metaview Tool Ecosystem
 
 > [!NOTE]
-> **Tool names and counts below are indicative, not verified.** An earlier revision
-> claimed 51 tools from a live `tools/list`; the shipped
-> [`toolspec.json`](../toolspec.json) declares 33 read-only tools, and the two lists do
-> not fully agree. Regenerate both from a live `tools/list` before relying on either.
+> The categories below are indicative of the provider's surface area. The
+> authoritative list for any tenant is whatever a live `tools/list` returns.
 
 The upstream surface spans the talent acquisition workflow:
 

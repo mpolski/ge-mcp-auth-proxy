@@ -251,7 +251,7 @@ async def oauth_callback(
         ttl_seconds=settings.AUTH_CODE_TTL_SECONDS,
     )
 
-    # Redirect user browser back to Google Vertex AI Search / Gemini Enterprise redirect URI
+    # Redirect user browser back to the Gemini Enterprise redirect URI
     google_params = {
         "code": proxy_auth_code,
         "state": session.google_state,
@@ -266,7 +266,7 @@ async def oauth_token(
     request: Request,
     storage: StorageBackend = Depends(get_storage),
 ):
-    """Step 3: Server-to-server token endpoint called by Discovery Engine / Gemini Enterprise backend."""
+    """Step 3: Server-to-server token endpoint called by the Gemini Enterprise backend."""
     try:
         form_data = await request.form()
         form_dict = dict(form_data)

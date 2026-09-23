@@ -11,12 +11,7 @@ Related: [Architecture](ARCHITECTURE.md) · [Deployment](DEPLOYMENT.md) · [Secu
 > that hand out a live user's proxy access token. Never enable it on a deployed
 > service. See [Security](SECURITY.md#test-console).
 
-> [!NOTE]
-> Verification status: this path was exercised end-to-end against a live Gemini
-> Enterprise connector on 2026-09-23 using the Metaview profile. Carta and Greenhouse
-> are configured from their published OAuth discovery documents but have NOT been
-> verified against a live tenant. The reference deployment used for that testing no
-> longer exists, so every URL below is a placeholder.
+> Every URL below is a placeholder. Substitute your own service URL.
 
 ---
 
@@ -170,8 +165,7 @@ What to confirm:
 > [!NOTE]
 > This appendix records one provider's specifics. Tool names, arguments and product
 > concepts differ per provider — do not treat anything here as MCP-general. Run
-> `tools/list` against your own provider and use what it returns. These steps were
-> last exercised on 2026-09-23.
+> `tools/list` against your own provider and use what it returns.
 
 ### A1. Interview data
 
@@ -196,11 +190,9 @@ What to confirm:
      }'
    ```
 
-   > [!WARNING]
-   > The exact argument schema for this tool is **unverified**. An earlier revision of
-   > these docs claimed a mandatory `rationale` argument; that contradicts the shipped
-   > [`toolspec.json`](../toolspec.json) and was never confirmed against a live
-   > `tools/list`. Read the schema from `tools/list` before relying on it. See
+   > [!IMPORTANT]
+   > Read this tool's argument schema from a live `tools/list` rather than copying
+   > the example above; providers change schemas without notice. See
    > [Architecture section 4](ARCHITECTURE.md#4-vendor-case-study-metaview).
 
 4. What happens underneath: the proxy resolves the presented bearer token to that

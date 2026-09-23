@@ -4,23 +4,19 @@ Related: [Architecture](ARCHITECTURE.md) · [Deployment](DEPLOYMENT.md) · [Secu
 
 ---
 
-## What this is for in Release 1
+## What this is for
 
 Registering the broker in Agent Registry makes it **discoverable in the Gemini
 Enterprise tool catalog**. That is the whole scope here.
 
 Registration is **optional**. Gemini Enterprise connects to the broker over a plain
-HTTPS MCP URL, and that path is what Release 1 ships. It was tested end-to-end
-against a live Gemini Enterprise connector on 2026-09-23 using the Metaview profile;
-Carta and Greenhouse are configured from their published OAuth discovery documents
-but have NOT been verified against a live tenant. Registering does not change how
+HTTPS MCP URL, and that is the supported path. Registering does not change how
 traffic flows, how users authenticate, or how per-user isolation works.
 
 > [!NOTE]
 > Routing traffic through **Agent Gateway** is deliberately out of scope. It needs a
 > gateway, a binding, an Agent Identity connector and an IAP egress grant, and it
-> changes which credential reaches the broker. That work is parked in the
-> `mcp_oauth` research repo.
+> changes which credential reaches the broker.
 
 ---
 
@@ -83,8 +79,6 @@ the entry to appear alongside globally-scoped Gemini Enterprise apps.
 | `us-central1` | Yes | Matches a `us-central1` Cloud Run service |
 | `us` | **No** | `location is not supported` |
 
-Verified against the live Agent Registry API on 2026-09-23.
-
 ---
 
 ## 4. The toolspec is an allowlist, and that is the point
@@ -100,8 +94,7 @@ enforcement boundary.
 > [!IMPORTANT]
 > If you need hard enforcement, the check belongs in
 > [`app/mcp/proxy.py`](../app/mcp/proxy.py), where the request body can be
-> inspected before forwarding. Not implemented in Release 1 — see the README's
-> known limitations.
+> inspected before forwarding. Not currently implemented.
 
 ---
 

@@ -22,12 +22,12 @@ class Settings(BaseSettings):
     # Gemini Enterprise OAuth Credentials
     GE_CLIENT_ID: str = Field(
         default="ge-mcp-proxy-client",
-        description="Client ID expected from Gemini Enterprise / Discovery Engine",
+        description="Client ID expected from Gemini Enterprise",
     )
     GE_CLIENT_SECRET: str = Field(
         default="",
         description=(
-            "Client Secret expected from Gemini Enterprise / Discovery Engine. "
+            "Client Secret expected from Gemini Enterprise. "
             "Must be set to a high-entropy random value; an empty value is "
             "rejected at startup."
         ),
