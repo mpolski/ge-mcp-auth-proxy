@@ -7,7 +7,6 @@
 
 An enterprise OAuth 2.0 identity broker and Model Context Protocol (MCP) runtime proxy connecting **Gemini Enterprise** to any OAuth-secured MCP SaaS provider (**Metaview.ai**, **Carta**, **Greenhouse**, etc.), with strict per-user data isolation.
 
-Runs entirely on Google Cloud Run and Google Cloud Secret Manager. No third-party infrastructure or external databases required.
 
 ---
 
