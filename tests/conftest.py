@@ -15,12 +15,17 @@ def configure_test_environment():
     settings.STORAGE_BACKEND = "memory"
     settings.GE_CLIENT_ID = "test-ge-client"
     settings.GE_CLIENT_SECRET = "test-ge-secret"
-    settings.METAVIEW_CLIENT_ID = "test-mv-client"
-    settings.METAVIEW_CLIENT_SECRET = "test-mv-secret"
+    settings.UPSTREAM_SERVICE_NAME = "testvendor"
+    settings.UPSTREAM_CLIENT_ID = "test-upstream-client"
+    settings.UPSTREAM_CLIENT_SECRET = "test-upstream-secret"
     settings.PROXY_BASE_URL = "https://proxy.example.com"
-    settings.METAVIEW_AUTH_URL = "https://auth.metaview.ai/oauth2/authorize"
-    settings.METAVIEW_TOKEN_URL = "https://auth.metaview.ai/oauth2/token"
-    settings.METAVIEW_MCP_URL = "https://mcp.metaview.ai/mcp"
+    settings.UPSTREAM_AUTH_URL = "https://auth.example.com/oauth2/authorize"
+    settings.UPSTREAM_TOKEN_URL = "https://auth.example.com/oauth2/token"
+    settings.UPSTREAM_MCP_URL = "https://mcp.example.com/mcp"
+    # Set explicitly: UPSTREAM_RESOURCE has no default, so the RFC 8707 resource
+    # indicator would otherwise be absent and the authorize test would stop
+    # covering it silently.
+    settings.UPSTREAM_RESOURCE = "https://mcp.example.com/mcp"
 
     memory_store = MemoryStorage()
     set_storage(memory_store)

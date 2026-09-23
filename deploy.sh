@@ -14,7 +14,34 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 # Vendor Profile & Configuration
 # ------------------------------------------------------------------------------
-VENDOR="${VENDOR:-${UPSTREAM_SERVICE_NAME:-metaview}}"
+# VENDOR selects a preset profile below, and names the Cloud Run service, the
+# service account and the Secret Manager namespace. It is deliberately not
+# defaulted: picking a vendor for the operator is how a deployment ends up
+# pointed at somebody else's SaaS tenant.
+VENDOR="${VENDOR:-${UPSTREAM_SERVICE_NAME:-}}"
+if [[ -z "${VENDOR}" ]]; then
+    cat >&2 <<'USAGE'
+ERROR: VENDOR is not set.
+
+Usage:  VENDOR=<name> ./deploy.sh
+
+Preset profiles:  metaview | carta | greenhouse
+
+Any other name deploys a generic profile; supply the endpoints yourself:
+
+  VENDOR=acme \
+  UPSTREAM_AUTH_URL=https://auth.acme.com/authorize \
+  UPSTREAM_TOKEN_URL=https://auth.acme.com/token \
+  UPSTREAM_MCP_URL=https://mcp.acme.com/mcp \
+  ./deploy.sh
+
+Discover those values from the provider itself:
+  curl -s -D- -X POST https://<mcp-host>/mcp        # read WWW-Authenticate
+  curl -s https://<mcp-host>/.well-known/oauth-protected-resource/mcp
+  curl -s https://<auth-host>/.well-known/oauth-authorization-server
+USAGE
+    exit 1
+fi
 VENDOR="$(echo "${VENDOR}" | tr '[:upper:]' '[:lower:]')"
 
 PROJECT_ID="${GCP_PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || true)}"
@@ -58,8 +85,9 @@ GE_ALLOWED_REDIRECT_URIS="${GE_ALLOWED_REDIRECT_URIS:-${GE_REDIRECT_URI}}"
 # ------------------------------------------------------------------------------
 case "${VENDOR}" in
     metaview)
-        # In production use and verified end-to-end against a live Gemini
-        # Enterprise connector.
+        # Tested end-to-end against a live Gemini Enterprise connector
+        # on 2026-09-23. Carta and Greenhouse are configured from their
+        # published discovery documents but have not been run end-to-end.
         DEFAULT_AUTH_URL="https://auth.metaview.ai/oauth2/authorize"
         DEFAULT_TOKEN_URL="https://auth.metaview.ai/oauth2/token"
         DEFAULT_MCP_URL="https://mcp.metaview.ai/mcp"
@@ -114,15 +142,28 @@ case "${VENDOR}" in
         ;;
 esac
 
-UPSTREAM_CLIENT_ID="${UPSTREAM_CLIENT_ID:-${METAVIEW_CLIENT_ID:-}}"
-UPSTREAM_CLIENT_SECRET="${UPSTREAM_CLIENT_SECRET:-${METAVIEW_CLIENT_SECRET:-}}"
-UPSTREAM_AUTH_URL="${UPSTREAM_AUTH_URL:-${METAVIEW_AUTH_URL:-${DEFAULT_AUTH_URL}}}"
-UPSTREAM_TOKEN_URL="${UPSTREAM_TOKEN_URL:-${METAVIEW_TOKEN_URL:-${DEFAULT_TOKEN_URL}}}"
-UPSTREAM_MCP_URL="${UPSTREAM_MCP_URL:-${METAVIEW_MCP_URL:-${DEFAULT_MCP_URL}}}"
+UPSTREAM_CLIENT_ID="${UPSTREAM_CLIENT_ID:-}"
+UPSTREAM_CLIENT_SECRET="${UPSTREAM_CLIENT_SECRET:-}"
+UPSTREAM_AUTH_URL="${UPSTREAM_AUTH_URL:-${DEFAULT_AUTH_URL}}"
+UPSTREAM_TOKEN_URL="${UPSTREAM_TOKEN_URL:-${DEFAULT_TOKEN_URL}}"
+UPSTREAM_MCP_URL="${UPSTREAM_MCP_URL:-${DEFAULT_MCP_URL}}"
 UPSTREAM_SCOPES="${UPSTREAM_SCOPES:-${DEFAULT_SCOPES}}"
 UPSTREAM_RESOURCE="${UPSTREAM_RESOURCE:-${DEFAULT_RESOURCE}}"
 UPSTREAM_AUDIENCE="${UPSTREAM_AUDIENCE:-${DEFAULT_AUDIENCE}}"
 UPSTREAM_REGISTRATION_URL="${UPSTREAM_REGISTRATION_URL:-${DEFAULT_REG_URL}}"
+
+# Fail before creating any cloud resources rather than after. A service account,
+# custom role and several secrets are created below; a revision that cannot
+# reach an upstream would leave all of them behind.
+missing_endpoints=()
+if [[ -z "${UPSTREAM_AUTH_URL}" ]]; then missing_endpoints+=("UPSTREAM_AUTH_URL"); fi
+if [[ -z "${UPSTREAM_TOKEN_URL}" ]]; then missing_endpoints+=("UPSTREAM_TOKEN_URL"); fi
+if [[ -z "${UPSTREAM_MCP_URL}" ]]; then missing_endpoints+=("UPSTREAM_MCP_URL"); fi
+if [[ ${#missing_endpoints[@]} -gt 0 ]]; then
+    echo "ERROR: no preset profile for VENDOR='${VENDOR}' and these are unset: ${missing_endpoints[*]}" >&2
+    echo "Set them in the environment, or use a preset: metaview | carta | greenhouse" >&2
+    exit 1
+fi
 
 if [[ -z "${PROJECT_ID}" ]]; then
     echo "ERROR: GCP_PROJECT_ID is not set and no default gcloud project was found." >&2

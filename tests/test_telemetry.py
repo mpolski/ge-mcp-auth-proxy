@@ -20,8 +20,8 @@ async def test_telemetry_mcp_spans_and_attributes(monkeypatch):
         "test-otel-proxy-token",
         UserTokenData(
             proxy_access_token="test-otel-proxy-token",
-            metaview_access_token="mv-real-token-123",
-            metaview_refresh_token="mv-refresh-token-123",
+            upstream_access_token="up-real-token-123",
+            upstream_refresh_token="up-refresh-token-123",
         ),
     )
 

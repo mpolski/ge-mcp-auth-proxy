@@ -10,7 +10,8 @@ Related: [Architecture](ARCHITECTURE.md) · [Deployment](DEPLOYMENT.md) · [Test
 
 This proxy mediates access to data that is permissioned per user inside the upstream
 SaaS provider — for example interview transcripts, candidate evaluations and hiring
-deliberations in Metaview. The central security requirement is therefore:
+deliberations in Metaview, which is used throughout these docs as the worked example.
+The central security requirement is therefore:
 
 > A request carrying user A's credential must never return user B's data.
 
@@ -55,7 +56,7 @@ allow_fallback = primary_token.startswith("eyJ") or (not is_testing)
 
 `TESTING` is unset in production, so `not is_testing` was always true and the fallback
 was **unconditional**. Any bearer string — including a randomly guessed one — was
-served using the most recently active user's Metaview credentials.
+served using the most recently active user's upstream credentials.
 
 This reproduced exactly the shared-static-credential anti-pattern the proxy exists to
 prevent.
@@ -87,12 +88,12 @@ proxy access token bound to a different employee's session.
 
 Combined with `/test/active-token` — also unauthenticated, returning a live proxy
 access token — and a service deployed `--allow-unauthenticated`, this formed a
-complete anonymous path to a real user's Metaview data:
+complete anonymous path to a real user's upstream data:
 
 ```
 GET /test-callback    → harvest GE_CLIENT_SECRET
 GET /test/active-token → obtain a live proxy access token
-POST /mcp             → read that user's interview data
+POST /mcp             → read that user's upstream data
 ```
 
 **Fixed:** the token exchange moved server-side to `/test/exchange`, so the secret is
@@ -229,10 +230,14 @@ curl -X POST "${SERVICE_URL}/oauth/revoke" \
 > RFC 7009 §2.2 — returning `404` for unknown tokens would turn it into an oracle for
 > testing whether a guessed token is live.
 
-To revoke everything, delete the token secrets directly:
+To revoke everything, delete the token secrets directly. Every secret the broker
+creates is labelled `app=ge-mcp-auth-proxy`, and secret IDs are namespaced by
+`SECRET_PREFIX` — `ge-<first four characters of VENDOR>` when deployed with
+`deploy.sh`, so `ge-meta` for Metaview, `ge-cart` for Carta, `ge-gree` for Greenhouse:
 
 ```bash
-gcloud secrets list --filter="labels.app=metaview-mcp-proxy AND name~ge-mv-(tok|ref)-" \
+PREFIX="ge-meta"   # your SECRET_PREFIX
+gcloud secrets list --filter="labels.app=ge-mcp-auth-proxy AND name~${PREFIX}-(tok|ref)-" \
   --format='value(name)' | xargs -r -n1 gcloud secrets delete --quiet
 ```
 

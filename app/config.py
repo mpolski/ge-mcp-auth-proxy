@@ -21,12 +21,16 @@ class Settings(BaseSettings):
 
     # Gemini Enterprise OAuth Credentials
     GE_CLIENT_ID: str = Field(
-        default="ge-metaview-client",
+        default="ge-mcp-proxy-client",
         description="Client ID expected from Gemini Enterprise / Discovery Engine",
     )
     GE_CLIENT_SECRET: str = Field(
-        default="ge-metaview-secret-placeholder",
-        description="Client Secret expected from Gemini Enterprise / Discovery Engine",
+        default="",
+        description=(
+            "Client Secret expected from Gemini Enterprise / Discovery Engine. "
+            "Must be set to a high-entropy random value; an empty value is "
+            "rejected at startup."
+        ),
     )
     GE_ALLOWED_REDIRECT_URIS: str = Field(
         default="https://vertexaisearch.cloud.google.com/oauth-redirect",
@@ -37,50 +41,43 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Upstream Provider Configuration (Metaview, Greenhouse, Carta, etc.)
+    # Upstream Provider Configuration.
+    #
+    # Deliberately vendor-neutral: nothing here defaults to a real SaaS host.
+    # A deployment that forgets to set the endpoints is caught by
+    # `missing_required_settings()` at startup rather than quietly brokering
+    # tokens against someone else's tenant. Per-vendor values live in deploy.sh
+    # and .env.example.
     UPSTREAM_SERVICE_NAME: str = Field(
-        default="metaview",
-        description="Provider identifier (e.g. metaview, greenhouse, carta), used in telemetry and defaults",
+        default="upstream",
+        description=(
+            "Short provider identifier for this service instance, used in "
+            "telemetry, secret naming and log lines (e.g. metaview, greenhouse, carta)"
+        ),
     )
     UPSTREAM_CLIENT_ID: str = Field(
-        default_factory=lambda: (
-            os.environ.get("UPSTREAM_CLIENT_ID")
-            or os.environ.get("METAVIEW_CLIENT_ID")
-            or "upstream-client-id-placeholder"
-        ),
-        description="Client ID for upstream OAuth application (from DCR or portal)",
+        default="",
+        description="Client ID for the upstream OAuth application (from DCR or the vendor portal)",
     )
     UPSTREAM_CLIENT_SECRET: str = Field(
-        default_factory=lambda: (
-            os.environ.get("UPSTREAM_CLIENT_SECRET")
-            or os.environ.get("METAVIEW_CLIENT_SECRET")
-            or ""
+        default="",
+        description=(
+            "Client Secret for the upstream OAuth application. Leave empty for "
+            "public PKCE clients; some providers advertise only "
+            "token_endpoint_auth_method=none and reject a secret outright."
         ),
-        description="Client Secret for upstream OAuth application (if confidential client)",
     )
     UPSTREAM_AUTH_URL: str = Field(
-        default_factory=lambda: (
-            os.environ.get("UPSTREAM_AUTH_URL")
-            or os.environ.get("METAVIEW_AUTH_URL")
-            or "https://auth.metaview.ai/oauth2/authorize"
-        ),
-        description="Upstream OAuth authorization endpoint",
+        default="",
+        description="Upstream OAuth authorization endpoint (required)",
     )
     UPSTREAM_TOKEN_URL: str = Field(
-        default_factory=lambda: (
-            os.environ.get("UPSTREAM_TOKEN_URL")
-            or os.environ.get("METAVIEW_TOKEN_URL")
-            or "https://auth.metaview.ai/oauth2/token"
-        ),
-        description="Upstream OAuth token endpoint",
+        default="",
+        description="Upstream OAuth token endpoint (required)",
     )
     UPSTREAM_MCP_URL: str = Field(
-        default_factory=lambda: (
-            os.environ.get("UPSTREAM_MCP_URL")
-            or os.environ.get("METAVIEW_MCP_URL")
-            or "https://mcp.metaview.ai/mcp"
-        ),
-        description="Upstream hosted MCP endpoint",
+        default="",
+        description="Upstream hosted MCP endpoint (required)",
     )
     UPSTREAM_REGISTRATION_URL: Optional[str] = Field(
         default=None,
@@ -88,15 +85,18 @@ class Settings(BaseSettings):
     )
     UPSTREAM_SCOPES: str = Field(
         default="openid profile email offline_access",
-        description="OAuth scopes requested from the upstream provider",
+        description=(
+            "OAuth scopes requested from the upstream provider. Providers differ "
+            "widely here; read the scopes_supported list in the provider's "
+            "RFC 8414 discovery document rather than assuming these defaults."
+        ),
     )
     UPSTREAM_RESOURCE: Optional[str] = Field(
-        default_factory=lambda: (
-            os.environ.get("UPSTREAM_RESOURCE")
-            or os.environ.get("METAVIEW_MCP_URL")
-            or "https://mcp.metaview.ai/mcp"
+        default=None,
+        description=(
+            "RFC 8707 Resource Indicator. Set it to the upstream MCP URL when the "
+            "provider requires the authorization request to name the resource."
         ),
-        description="RFC 8707 Resource Indicator (if required by upstream, e.g. Metaview)",
     )
     UPSTREAM_AUDIENCE: Optional[str] = Field(
         default=None,
@@ -118,46 +118,21 @@ class Settings(BaseSettings):
         allowed = self.allowed_redirect_uris
         return bool(allowed) and "*" not in allowed
 
-    # Backwards compatibility properties for existing scripts/tests
-    @property
-    def METAVIEW_CLIENT_ID(self) -> str:
-        return self.UPSTREAM_CLIENT_ID
+    def missing_required_settings(self) -> list:
+        """Names of settings that have no safe default and were left unset.
 
-    @METAVIEW_CLIENT_ID.setter
-    def METAVIEW_CLIENT_ID(self, val: str):
-        self.UPSTREAM_CLIENT_ID = val
-
-    @property
-    def METAVIEW_CLIENT_SECRET(self) -> str:
-        return self.UPSTREAM_CLIENT_SECRET
-
-    @METAVIEW_CLIENT_SECRET.setter
-    def METAVIEW_CLIENT_SECRET(self, val: str):
-        self.UPSTREAM_CLIENT_SECRET = val
-
-    @property
-    def METAVIEW_AUTH_URL(self) -> str:
-        return self.UPSTREAM_AUTH_URL
-
-    @METAVIEW_AUTH_URL.setter
-    def METAVIEW_AUTH_URL(self, val: str):
-        self.UPSTREAM_AUTH_URL = val
-
-    @property
-    def METAVIEW_TOKEN_URL(self) -> str:
-        return self.UPSTREAM_TOKEN_URL
-
-    @METAVIEW_TOKEN_URL.setter
-    def METAVIEW_TOKEN_URL(self, val: str):
-        self.UPSTREAM_TOKEN_URL = val
-
-    @property
-    def METAVIEW_MCP_URL(self) -> str:
-        return self.UPSTREAM_MCP_URL
-
-    @METAVIEW_MCP_URL.setter
-    def METAVIEW_MCP_URL(self, val: str):
-        self.UPSTREAM_MCP_URL = val
+        Returned rather than raised so the caller decides the severity: the
+        deployed service aborts on startup, while unit tests and the DCR helper
+        script can import `settings` without a full upstream configuration.
+        """
+        required = {
+            "UPSTREAM_CLIENT_ID": self.UPSTREAM_CLIENT_ID,
+            "UPSTREAM_AUTH_URL": self.UPSTREAM_AUTH_URL,
+            "UPSTREAM_TOKEN_URL": self.UPSTREAM_TOKEN_URL,
+            "UPSTREAM_MCP_URL": self.UPSTREAM_MCP_URL,
+            "GE_CLIENT_SECRET": self.GE_CLIENT_SECRET,
+        }
+        return [name for name, value in required.items() if not value]
 
     # Google Cloud Project & Secret Manager Configuration
     GCP_PROJECT_ID: Optional[str] = Field(
@@ -182,9 +157,13 @@ class Settings(BaseSettings):
     SECRET_PREFIX: str = Field(
         default_factory=lambda: (
             os.environ.get("SECRET_PREFIX")
-            or ("ge-mv" if os.environ.get("UPSTREAM_SERVICE_NAME", "metaview") == "metaview" else f"ge-{os.environ.get('UPSTREAM_SERVICE_NAME')}")
+            or "ge-" + os.environ.get("UPSTREAM_SERVICE_NAME", "mcp")[:4].lower()
         ),
-        description="Prefix for Secret Manager secret names",
+        description=(
+            "Prefix for Secret Manager secret names. Must be unique per upstream "
+            "provider when several brokers share one project, otherwise two "
+            "deployments would read each other's token secrets."
+        ),
     )
     STORAGE_BACKEND: Literal["secret_manager", "memory"] = Field(
         default="memory" if os.environ.get("TESTING") else "secret_manager",

@@ -1,6 +1,6 @@
 """RFC 7591 Dynamic Client Registration (DCR) helper for upstream MCP OAuth services.
 
-Many desktop-first MCP services (Metaview, Carta, Greenhouse, etc.) do not have an IT
+Many desktop-first MCP services do not have an IT
 admin console to manually pre-register static OAuth clients and redirect URIs. Instead,
 they implement RFC 7591 Dynamic Client Registration.
 
@@ -108,7 +108,7 @@ def main():
     parser.add_argument(
         "--registration-url",
         required=True,
-        help="Upstream registration URL (e.g. https://auth.metaview.ai/oauth2/register)",
+        help="Upstream RFC 7591 registration URL, from the provider's discovery document",
     )
     parser.add_argument(
         "--redirect-uri",

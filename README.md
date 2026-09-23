@@ -1,6 +1,6 @@
 # Gemini Enterprise Universal MCP Identity Broker Proxy
 
-[![Tests](https://img.shields.io/badge/tests-67%20passed-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-68%20passed-brightgreen.svg)](#testing)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Google Cloud Run](https://img.shields.io/badge/Google%20Cloud-Run-4285F4.svg?logo=googlecloud&logoColor=white)](https://cloud.google.com/run)
 [![Secret Manager](https://img.shields.io/badge/Google%20Cloud-Secret%20Manager-34A853.svg?logo=googlecloud&logoColor=white)](https://cloud.google.com/secret-manager)
@@ -46,10 +46,10 @@ Being explicit about what has actually been exercised against a live system:
 
 | Claim | Status |
 |---|---|
-| End-to-end OAuth sign-in through Gemini Enterprise | **Verified** against a live connector |
+| End-to-end OAuth sign-in through Gemini Enterprise | **Verified** against a live connector, 2026-09-23 |
 | Per-user token isolation with concurrent users | **Verified** with two distinct users |
-| Live `tools/call` returning upstream data | **Verified** (Metaview) |
-| Metaview endpoint configuration | **Verified** in production use |
+| Live `tools/call` returning upstream data | **Verified** against Metaview |
+| Metaview endpoint configuration | **Verified** by end-to-end use |
 | Carta and Greenhouse endpoint configuration | **Verified** from provider OAuth discovery documents; **not yet run end to end** |
 | Routing via Agent Gateway | **Out of scope** for this release |
 
@@ -58,6 +58,12 @@ Being explicit about what has actually been exercised against a live system:
 > own RFC 8414 / RFC 9728 metadata, so the URLs are correct. What has not happened
 > is a full sign-in against a real tenant of either, which needs an account. Expect
 > to discover tenant-specific details on first run.
+
+> [!IMPORTANT]
+> There is no running reference deployment. The environment used for the
+> verification above has been torn down, so nothing here is live and no
+> credentials, project IDs or service URLs from it remain in this repository.
+> Deploy into your own project with your own client registrations.
 
 ---
 
@@ -104,7 +110,7 @@ To ensure failure domain isolation, security partitioning, and seamless alignmen
 
 - **Dedicated Cloud Run Service per Vendor:** Each SaaS provider runs on its own isolated Cloud Run service (`ge-metaview-proxy`, `ge-carta-proxy`, `ge-greenhouse-proxy`).
 - **Failure Domain Isolation:** A schema change, token revocation spike, or vendor outage on one SaaS platform has zero blast radius on others.
-- **Dedicated Secret Manager Namespaces:** Ephemeral user tokens and sessions use separate prefixes (`ge-mv-*`, `ge-ca-*`, `ge-gh-*`), preventing cross-service credential leakage.
+- **Dedicated Secret Manager Namespaces:** Ephemeral user tokens and sessions use separate prefixes derived from the vendor name (`ge-meta-*`, `ge-cart-*`, `ge-gree-*`), preventing cross-service credential leakage.
 - **Dedicated Gemini Enterprise MCP Registrations:** Gemini Enterprise registers tools per endpoint URL; dedicated services provide 1:1 mapped endpoint URLs.
 
 ---
@@ -115,10 +121,13 @@ To ensure failure domain isolation, security partitioning, and seamless alignmen
 
 The included `deploy.sh` script automates enabling GCP APIs, creating least-privilege IAM roles, creating Secret Manager credentials, deploying Cloud Run, and performing Dynamic Client Registration.
 
-#### Deploy for Metaview (Default)
+`VENDOR` is required and has no default, so a deployment cannot silently point at
+the wrong provider.
+
+#### Deploy for Metaview
 ```bash
 export GCP_PROJECT_ID="your-project-id"
-./deploy.sh
+VENDOR=metaview ./deploy.sh
 ```
 
 #### Deploy for Carta
@@ -129,26 +138,33 @@ Dynamic Client Registration supply the client ID.
 
 ```bash
 export GCP_PROJECT_ID="your-project-id"
-export VENDOR="carta"
-./deploy.sh
+VENDOR=carta ./deploy.sh
 ```
 
 #### Deploy for Greenhouse
 ```bash
 export GCP_PROJECT_ID="your-project-id"
-export VENDOR="greenhouse"
-./deploy.sh
+VENDOR=greenhouse ./deploy.sh
 ```
 
 #### Deploy for Any Custom MCP Service
+
+Any `VENDOR` name outside the three presets works, provided you supply the
+endpoints. Discover them from the provider itself rather than guessing:
+
+```bash
+curl -s -D- -X POST https://<mcp-host>/mcp        # read the WWW-Authenticate header
+curl -s https://<mcp-host>/.well-known/oauth-protected-resource/mcp
+curl -s https://<auth-host>/.well-known/oauth-authorization-server
+```
+
 ```bash
 export GCP_PROJECT_ID="your-project-id"
-export VENDOR="mycustom"
 export UPSTREAM_AUTH_URL="https://auth.example.com/oauth2/authorize"
 export UPSTREAM_TOKEN_URL="https://auth.example.com/oauth2/token"
 export UPSTREAM_MCP_URL="https://mcp.example.com/mcp"
-export UPSTREAM_CLIENT_ID="your-client-id"
-./deploy.sh
+export UPSTREAM_CLIENT_ID="your-client-id"   # or omit and let DCR supply it
+VENDOR=mycustom ./deploy.sh
 ```
 
 Prefer running raw `gcloud` commands manually? See [Deployment → Manual path](docs/DEPLOYMENT.md#manual-path).
@@ -195,22 +211,29 @@ Set via environment variables or `.env` file (see [app/config.py](app/config.py)
 | Variable | Default | Description |
 |---|---|---|
 | `PROXY_BASE_URL` | `http://localhost:8080` | Public URL of this Cloud Run service |
-| `GE_CLIENT_ID` | `ge-metaview-client` | Client ID expected from Gemini Enterprise |
-| `GE_CLIENT_SECRET` | — | Mounted securely from Secret Manager via `--set-secrets` |
-| `UPSTREAM_SERVICE_NAME`| `metaview` | Identifier for the upstream vendor (e.g. `metaview`, `carta`, `greenhouse`) |
-| `UPSTREAM_CLIENT_ID` | — | Upstream OAuth client ID (from DCR or developer portal) |
-| `UPSTREAM_CLIENT_SECRET` | — | Upstream OAuth client secret (empty for public PKCE clients) |
-| `UPSTREAM_AUTH_URL` | Metaview default | Upstream OAuth authorization endpoint |
-| `UPSTREAM_TOKEN_URL` | Metaview default | Upstream OAuth token endpoint |
-| `UPSTREAM_MCP_URL` | Metaview default | Upstream hosted MCP server URL |
-| `UPSTREAM_RESOURCE` | Metaview default | RFC 8707 Resource indicator (if required by upstream) |
+| `GE_CLIENT_ID` | `ge-mcp-proxy-client` | Client ID expected from Gemini Enterprise |
+| `GE_CLIENT_SECRET` | — (required) | Mounted securely from Secret Manager via `--set-secrets` |
+| `UPSTREAM_SERVICE_NAME`| `upstream` | Identifier for the upstream vendor (e.g. `metaview`, `carta`, `greenhouse`) |
+| `UPSTREAM_CLIENT_ID` | — (required) | Upstream OAuth client ID (from DCR or developer portal) |
+| `UPSTREAM_CLIENT_SECRET` | — | Upstream OAuth client secret. Leave empty for public PKCE clients; Carta rejects a request that carries one |
+| `UPSTREAM_AUTH_URL` | — (required) | Upstream OAuth authorization endpoint |
+| `UPSTREAM_TOKEN_URL` | — (required) | Upstream OAuth token endpoint |
+| `UPSTREAM_MCP_URL` | — (required) | Upstream hosted MCP server URL |
+| `UPSTREAM_RESOURCE` | `None` | RFC 8707 Resource indicator, normally the MCP URL, if the provider requires it |
 | `UPSTREAM_AUDIENCE` | `None` | Audience parameter (e.g. Auth0/Okta backed services) |
 | `STORAGE_BACKEND` | `secret_manager` | Storage engine (`secret_manager` for GCP, `memory` for local testing) |
-| `SECRET_PREFIX` | `ge-mv` | Secret Manager name prefix (`ge-mv`, `ge-ca`, `ge-gh`) |
+| `SECRET_PREFIX` | `ge-<first 4 chars of vendor>` | Secret Manager name prefix. Must be unique per provider in a shared project |
 | `PROXY_ACCESS_TOKEN_EXPIRES_IN` | `3600` | Proxy access token validity enforced at `/mcp` (1 hour) |
 | `PROXY_REFRESH_TOKEN_EXPIRES_IN` | `2592000` | Absolute refresh session ceiling (30 days) |
 | `OTEL_ENABLED` | `true` | Export OpenTelemetry traces to Google Cloud Trace |
 | `GE_ALLOWED_REDIRECT_URIS` | GE callback | Comma-separated exact-match allowlist of `redirect_uri` values accepted at `/oauth/authorize` (RFC 6749 §3.1.2.3). `*` disables enforcement (local development only) |
+
+> [!IMPORTANT]
+> The variables marked *required* have no default. If any of them is unset the
+> service refuses to start rather than booting with a half-configured upstream,
+> which would otherwise only surface as a failure part-way through a user's
+> sign-in. The check is skipped when `STORAGE_BACKEND=memory` so local runs and
+> the test suite still work.
 
 ---
 
@@ -240,6 +263,6 @@ docs/
   TESTING.md         Unit tests and MCP verification guide
   AGENT_REGISTRY.md  Optional catalog registration runbook
 deploy.sh            Multi-vendor deployment automation script
-toolspec.json        Read-only tool allowlist published to Agent Registry
-tests/               67 automated pytest test cases
+toolspec.json        Example read-only tool allowlist (Metaview profile) for Agent Registry
+tests/               68 automated pytest test cases
 ```

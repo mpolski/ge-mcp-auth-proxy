@@ -27,7 +27,7 @@ class SecretManagerStorage(StorageBackend):
     Leverages Secret Manager's native TTL for automated expiration and deletion of ephemeral data.
     """
 
-    def __init__(self, project_id: str, prefix: str = "ge-mv"):
+    def __init__(self, project_id: str, prefix: str = "ge-mcp"):
         if not project_id:
             raise ValueError("GCP Project ID must be provided for SecretManagerStorage")
         self.project_id = project_id
@@ -61,7 +61,7 @@ class SecretManagerStorage(StorageBackend):
             secret_path = f"{parent}/secrets/{secret_id}"
             payload_bytes = payload_str.encode("utf-8")
 
-            secret_labels = {"app": "metaview-mcp-proxy"}
+            secret_labels = {"app": "ge-mcp-auth-proxy"}
             if labels:
                 secret_labels.update(labels)
 
@@ -342,7 +342,7 @@ class SecretManagerStorage(StorageBackend):
         return await asyncio.to_thread(self._sync_get_latest_user_token)
 
     def _sync_get_user_token_by_refresh_token(self, refresh_token: str) -> Optional[UserTokenData]:
-        # Fast path: check ge-mv-ref-{refresh_token}
+        # Fast path: check {prefix}-ref-{refresh_token}
         ref_id = self._secret_id("ref", refresh_token)
         raw = self._sync_read_secret(ref_id)
         if raw:
@@ -351,7 +351,7 @@ class SecretManagerStorage(StorageBackend):
             except Exception:
                 pass
 
-        # Fallback: scan ge-mv-tok-* secrets
+        # Fallback: scan {prefix}-tok-* secrets
         parent = f"projects/{self.project_id}"
         prefix = f"{self.prefix}-tok-"
         try:

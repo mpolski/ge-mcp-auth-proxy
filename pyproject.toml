@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "metaview-gemini-mcp-proxy"
+name = "ge-mcp-auth-proxy"
 version = "1.0.0"
-description = "Metaview & Gemini Enterprise OAuth2.0 MCP Identity Broker Proxy"
+description = "Gemini Enterprise OAuth 2.0 MCP Identity Broker Proxy"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

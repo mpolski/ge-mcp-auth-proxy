@@ -1,4 +1,4 @@
-"""Client for upstream OAuth 2.0 endpoints (Metaview, Greenhouse, Carta, etc.)."""
+"""Client for the upstream provider's OAuth 2.0 authorization and token endpoints."""
 
 import logging
 from typing import Dict, Any, Optional

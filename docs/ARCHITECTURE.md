@@ -5,7 +5,7 @@ How the Identity Broker Proxy bridges Gemini Enterprise and Model Context Protoc
 - [Enterprise Cloud Governance vs. Desktop Tooling Models](#1-enterprise-cloud-governance-vs-desktop-tooling-models)
 - [Multi-Vendor Separation of Concerns](#2-multi-vendor-separation-of-concerns-dedicated-cloud-run-instances)
 - [Request flows](#3-how-it-does-it-architecture--technical-flows)
-- [Upstream service behaviours](#4-deep-dive-interaction-with-metaview-services)
+- [Upstream service behaviours](#4-vendor-case-study-metaview)
 
 Related: [Deployment](DEPLOYMENT.md) · [Security](SECURITY.md) · [Testing](TESTING.md) · [Agent Registry](AGENT_REGISTRY.md)
 
@@ -80,7 +80,7 @@ Rather than running a monolithic multi-tenant broker that routes to multiple Saa
    Each vendor's token lifecycle, quota thresholds, and availability are isolated. An outage, API rate limit, or token revocation spike on one SaaS platform has zero impact on users querying other services.
 
 2. **Secret Manager Namespace Isolation:**
-   Each vendor instance operates within its own dedicated Secret Manager prefix (e.g. `ge-mv-*` for Metaview, `ge-ca-*` for Carta, `ge-gh-*` for Greenhouse). This prevents cross-service credential leakage and simplifies compliance auditing.
+   Each vendor instance operates within its own dedicated Secret Manager prefix. `deploy.sh` derives it as `ge-<first four characters of VENDOR>`, so the presets produce `ge-meta-*` for Metaview, `ge-cart-*` for Carta and `ge-gree-*` for Greenhouse. It can be overridden with `SECRET_PREFIX`; the application default when nothing is set is `ge-mcp`. This prevents cross-service credential leakage and simplifies compliance auditing.
 
 3. **1:1 Alignment with Gemini Enterprise MCP Registrations:**
    In Gemini Enterprise / Vertex AI Search, each Custom MCP Server is registered with a distinct tuple:
@@ -100,6 +100,15 @@ Rather than running a monolithic multi-tenant broker that routes to multiple Saa
 ## 3. How It Does It: Architecture & Technical Flows
 
 ### High-Level Topology
+
+> [!NOTE]
+> The diagrams in this section use Metaview as a **worked example**, not as the
+> product. The flow is identical for any OAuth 2.0 + PKCE MCP provider — substitute
+> that provider's own authorization, token and MCP endpoints.
+>
+> Verification status: Metaview has been tested end-to-end. Carta and Greenhouse are
+> configured from their published OAuth discovery documents but have NOT been verified
+> against a live tenant.
 
 ```
 +------------------+         +-------------------------------------------------------------+         +---------------------+
@@ -121,9 +130,9 @@ Rather than running a monolithic multi-tenant broker that routes to multiple Saa
 |                  |         |          v                                                  |
 |                  |         | [ Google Cloud Secret Manager ]                             |
 |                  |         | (Encrypted Per-User Token Storage with native TTL)          |
-|                  |         |  * ge-mv-sess-<uuid>   (OAuth Session, TTL: 10m)            |
-|                  |         |  * ge-mv-code-<uuid>   (Proxy Auth Code, TTL: 5m)           |
-|                  |         |  * ge-mv-tok-<uuid>    (User Tokens, Versioned)             |
+|                  |         |  * ge-meta-sess-<uuid> (OAuth Session, TTL: 10m)            |
+|                  |         |  * ge-meta-code-<uuid> (Proxy Auth Code, TTL: 5m)           |
+|                  |         |  * ge-meta-tok-<uuid>  (User Tokens, Versioned)             |
 |                  |         +-------------------------------------------------------------+
 +------------------+
 ```
@@ -147,7 +156,7 @@ sequenceDiagram
     Note over Proxy: 1. Generate session_id (UUID)<br/>2. Generate PKCE (verifier + S256 challenge)
     Proxy->>SM: Save session (google_redirect_uri, google_state, pkce_verifier) [TTL: 10m]
     Proxy-->>User: HTTP 302 Redirect to Metaview Auth URL
-    User->>MVAuth: GET /oauth2/authorize?client_id=METAVIEW_CLIENT_ID&code_challenge=S256...
+    User->>MVAuth: GET /oauth2/authorize?client_id=UPSTREAM_CLIENT_ID&code_challenge=S256...
     User->>MVAuth: Authenticates via Corporate SSO / Google Workspace
     MVAuth-->>User: HTTP 302 Redirect to Proxy /oauth/callback?code=MV_CODE&state=session_id
     User->>Proxy: GET /oauth/callback?code=MV_CODE&state=session_id
@@ -197,7 +206,7 @@ sequenceDiagram
     alt Token expired (or within 60s of expiry)
         Note over Proxy: Trigger Flow 4 (Auto-Refresh)
     end
-    Note over Proxy: Header Transformation:<br/>1. Replace Authorization with Bearer METAVIEW_ACCESS_TOKEN<br/>2. Strip Origin, Referer, Sec-Fetch-*<br/>3. Set Accept: application/json, text/event-stream
+    Note over Proxy: Header Transformation:<br/>1. Replace Authorization with Bearer UPSTREAM_ACCESS_TOKEN<br/>2. Strip Origin, Referer, Sec-Fetch-*<br/>3. Set Accept: application/json, text/event-stream
     Proxy->>MVMCP: Forward POST https://mcp.metaview.ai/mcp
     Note over MVMCP: Metaview Lambda Authorizer enforces user's personal permissions
     MVMCP-->>Proxy: HTTP 200 OK (Content-Type: text/event-stream)
@@ -211,7 +220,7 @@ sequenceDiagram
 
 Metaview access tokens have an expiration lifetime (typically 1 hour). The proxy handles token renewal automatically:
 
-1. **Preemptive Refresh:** When an MCP request arrives, the proxy checks `metaview_expires_at`. If the token expires in less than 60 seconds, the proxy calls Metaview's token endpoint (`grant_type=refresh_token`) before forwarding the request.
+1. **Preemptive Refresh:** When an MCP request arrives, the proxy checks `upstream_expires_at` on the stored token record. If the token expires in less than 60 seconds, the proxy calls the upstream token endpoint (`grant_type=refresh_token`) before forwarding the request.
 2. **Reactive 401 Recovery:** If Metaview's Lambda Authorizer revokes or rejects a token with `HTTP 401 Unauthorized`, the proxy automatically catches the response, invokes `refresh_access_token()`, updates Secret Manager with the new version, and retries the upstream MCP call once.
 3. **Zero Interruption:** The end user in Gemini Enterprise never experiences an unexpected session expiration or sign-in prompt during active work.
 
@@ -219,25 +228,51 @@ Metaview access tokens have an expiration lifetime (typically 1 hour). The proxy
 
 ### Storage Architecture: Google Cloud Secret Manager with Native TTL
 
-Unlike architectures relying on Cloud Firestore or Redis, this proxy utilizes **Google Cloud Secret Manager exclusively**:
+Unlike architectures relying on Cloud Firestore or Redis, this proxy utilizes **Google Cloud Secret Manager exclusively**.
 
-- **Ephemeral Sessions (`ge-mv-sess-<session_id>`):** Created when user starts OAuth. Configured with native Secret Manager TTL (`ttl: 600s`). Secret Manager automatically purges the secret after 10 minutes.
-- **Single-Use Auth Codes (`ge-mv-code-<code_id>`):** Created when Metaview redirects back. Configured with native TTL (`ttl: 300s`). Immediately deleted upon exchange at `/oauth/token`.
-- **Active User Tokens (`ge-mv-tok-<proxy_token>`):** Stored encrypted at rest with automatic Google-managed encryption keys (or CMEK). Retains token versions and supports Cloud Audit Logging for compliance.
+Secret IDs are namespaced by `SECRET_PREFIX`, written below as `<prefix>`. `deploy.sh`
+derives it as `ge-<first four characters of VENDOR>`, so the Metaview preset yields
+`ge-meta` — the value used in the example tree.
+
+- **Ephemeral Sessions (`<prefix>-sess-<session_id>`):** Created when user starts OAuth. Configured with native Secret Manager TTL (`ttl: 600s`). Secret Manager automatically purges the secret after 10 minutes.
+- **Single-Use Auth Codes (`<prefix>-code-<code_id>`):** Created when the upstream provider redirects back. Configured with native TTL (`ttl: 300s`). Immediately deleted upon exchange at `/oauth/token`.
+- **Active User Tokens (`<prefix>-tok-<proxy_token>`):** Stored encrypted at rest with automatic Google-managed encryption keys (or CMEK). Retains token versions and supports Cloud Audit Logging for compliance.
+
+Every secret the broker creates carries the label `app=ge-mcp-auth-proxy`, which is what
+the cleanup and audit commands in [Security](SECURITY.md) filter on.
 
 ```
-projects/{PROJECT_ID}/secrets/
-├── ge-mv-sess-4f81c962-e932-4886-b489-0c68ea7a7c73  (TTL: 10m)
-├── ge-mv-code-8931b2e1-4567-4e92-9111-df23b7a81234  (TTL: 5m)
-└── ge-mv-tok-8a4591ad-64fe-4d4d-b654-b2e912fdf2b4   (Active Session)
+projects/<YOUR_PROJECT_ID>/secrets/
+├── ge-meta-sess-4f81c962-e932-4886-b489-0c68ea7a7c73  (TTL: 10m)
+├── ge-meta-code-8931b2e1-4567-4e92-9111-df23b7a81234  (TTL: 5m)
+└── ge-meta-tok-8a4591ad-64fe-4d4d-b654-b2e912fdf2b4   (Active Session)
     ├── versions/1 (Initial tokens)
     └── versions/2 (Refreshed tokens)
 ```
 
+The stored token record uses vendor-neutral field names — `upstream_access_token`,
+`upstream_refresh_token`, `upstream_expires_at`, `upstream_code_verifier`. Earlier
+`metaview_*` aliases no longer exist.
+
 
 ---
 
-## 4. Deep Dive: Interaction with Metaview Services
+## 4. Vendor Case Study: Metaview
+
+> [!NOTE]
+> This section is **one worked example**, not universal MCP behaviour. It documents the
+> specific quirks encountered integrating Metaview, because they illustrate the class of
+> problem this broker solves. Carta and Greenhouse have different endpoints, scopes and
+> auth methods — see the presets in [`deploy.sh`](../deploy.sh). Those presets were read
+> from each provider's published OAuth discovery documents; only Metaview has been
+> tested end-to-end against a live tenant.
+>
+> Every provider's real configuration should be read from its own discovery documents:
+>
+> ```bash
+> curl -s https://<mcp-host>/.well-known/oauth-protected-resource/mcp
+> curl -s https://<auth-host>/.well-known/oauth-authorization-server
+> ```
 
 ### Metaview Service 1: Dynamic Client Registration (RFC 7591)
 
@@ -315,7 +350,7 @@ When redirecting the user to Metaview, the proxy initiates standard OAuth 2.1 au
 
 ### Metaview Service 4: MCP Gateway Protocols & Caveats (Metaview Vendor SaaS)
 
-Metaview's external MCP gateway (`https://mcp.metaview.ai/mcp`) is built on **Metaview's proprietary AWS infrastructure**, fronted by **AWS API Gateway** with a custom **Lambda Authorizer** (our proxy runs 100% on Google Cloud and connects to Metaview over HTTPS). Through live end-to-end testing, the following vendor gateway behaviors were identified and solved by our Google Cloud proxy:
+Metaview's external MCP gateway (`https://mcp.metaview.ai/mcp`) is built on **Metaview's proprietary AWS infrastructure**, fronted by **AWS API Gateway** with a custom **Lambda Authorizer** (this proxy runs entirely on Google Cloud and connects to Metaview over HTTPS). End-to-end testing on 2026-09-23 identified the following vendor gateway behaviours, each handled by the proxy:
 
 #### 1. The `Origin` Header Rejection (HTTP 403)
 - **Problem:** If a request contains browser headers such as `Origin: http://localhost:8080` or `Referer: ...`, Metaview's API Gateway immediately aborts with:
@@ -349,22 +384,57 @@ Metaview's external MCP gateway (`https://mcp.metaview.ai/mcp`) is built on **Me
   ```
 - The proxy properly decodes and streams these chunks back to Gemini Enterprise.
 
-#### 4. Mandatory Tool Arguments & Schema Enforcement
-- Metaview tools use Pydantic models with `additionalProperties: false`.
-- Sensitive tools (e.g. `search_conversations`, `get_user_context`) strictly require a `rationale: str` argument for auditability. Missing or invalid parameters return JSON-RPC schema validation errors.
+#### 4. Tool Arguments & Schema Enforcement
+
+> [!WARNING]
+> **Unverified.** An earlier revision of this document stated that Metaview tools use
+> `additionalProperties: false` and that sensitive tools such as `search_conversations`
+> and `get_user_context` strictly require a `rationale: str` argument.
+>
+> That claim was never checked against a live `tools/list`, and it **contradicts the
+> shipped [`toolspec.json`](../toolspec.json)**, which declares every tool with
+> `additionalProperties: true`, no `required` array, and no `rationale` property.
+>
+> Observed behaviour favours the toolspec: live `tools/call` requests through this
+> broker returned data without supplying `rationale`. Treat the upstream schema as
+> unknown until you confirm it:
+>
+> ```bash
+> curl -s -X POST "${SERVICE_URL}/mcp" \
+>   -H "Authorization: Bearer ${PROXY_ACCESS_TOKEN}" \
+>   -H 'Content-Type: application/json' \
+>   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+> ```
+>
+> An over-permissive declared schema is the safer failure direction: the model may pass
+> an argument the upstream rejects, which surfaces as a clean tool error rather than a
+> silently wrong result.
 
 ---
 
-### Discovered Metaview Tool Ecosystem (51 Tools)
+### Metaview Tool Ecosystem
 
-Executing `tools/list` against the live Metaview MCP server exposes **51 live tools** spanning the entire talent acquisition workflow:
+> [!NOTE]
+> **Tool names and counts below are indicative, not verified.** An earlier revision
+> claimed 51 tools from a live `tools/list`; the shipped
+> [`toolspec.json`](../toolspec.json) declares 33 read-only tools, and the two lists do
+> not fully agree. Regenerate both from a live `tools/list` before relying on either.
+
+The upstream surface spans the talent acquisition workflow:
 
 | Category | Representative Tools | Capabilities |
 | :--- | :--- | :--- |
 | **Identity & Scope** | `get_user_context` | Resolves authenticated user ID, organization ID, workspace name, and administrator flags. |
-| **Interview Intelligence** | `search_conversations`, `group_conversations`, `get_chart_data`, `get_conversation` | Searches recorded interview transcripts, summaries, interviewer scorecards, and historical hiring trends. |
-| **Sourcing & Talent Search** | `search_candidate_profiles`, `find_lookalike_candidates`, `post_sourcing_candidates_to_ats` | AI-assisted candidate discovery, profile ranking, and seamless synchronization into ATS platforms. |
-| **ATS Integrations** | `list_ats_jobs`, `search_ats_candidates`, `list_screens`, `manage_ats_custom_fields` | Read/write synchronization with enterprise Applicant Tracking Systems (Greenhouse, Lever, Ashby, Workday). |
-| **Recruiting Workflows** | `create_ai_field`, `search_reports`, `list_interviewers`, `list_fields`, `list_field_values` | Custom AI-extracted criteria, rubric definitions, and team calibration reports. |
+| **Interview Intelligence** | `search_conversations`, `group_conversations`, `get_chart_data` | Searches recorded interview transcripts, summaries, interviewer scorecards, and historical hiring trends. |
+| **Sourcing & Talent Search** | `list_sourcing_candidates`, `list_sourcing_searches`, `get_sourcing_analytics` | AI-assisted candidate discovery, profile ranking, and sourcing analytics. |
+| **ATS Integrations** | `list_ats_jobs`, `list_ats_stages`, `list_screens` | Read synchronization with enterprise Applicant Tracking Systems. |
+| **Recruiting Workflows** | `search_reports`, `list_fields`, `list_field_values` | Custom AI-extracted criteria, rubric definitions, and team calibration reports. |
+
+> [!IMPORTANT]
+> `toolspec.json` intentionally declares **read-only tools only**. Mutating tools the
+> upstream exposes are deliberately excluded. This governs what Gemini Enterprise
+> offers the model — it is **not** an enforcement boundary, because the broker forwards
+> whatever JSON-RPC body it receives. For hard enforcement, filter in
+> [`app/mcp/proxy.py`](../app/mcp/proxy.py).
 
 ---

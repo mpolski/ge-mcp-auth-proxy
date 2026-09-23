@@ -18,7 +18,7 @@ def mock_sm_client():
 
 @pytest.mark.asyncio
 async def test_secret_manager_save_and_get_session(mock_sm_client):
-    storage = SecretManagerStorage(project_id="test-project", prefix="ge-mv")
+    storage = SecretManagerStorage(project_id="test-project", prefix="ge-test")
 
     session = OAuthSessionData(
         session_id="sess-abc-123",
@@ -44,7 +44,7 @@ async def test_secret_manager_save_and_get_session(mock_sm_client):
 
 @pytest.mark.asyncio
 async def test_secret_manager_already_exists_on_create(mock_sm_client):
-    storage = SecretManagerStorage(project_id="test-project", prefix="ge-mv")
+    storage = SecretManagerStorage(project_id="test-project", prefix="ge-test")
     mock_sm_client.create_secret.side_effect = AlreadyExists("Secret already exists")
 
     session = OAuthSessionData(
@@ -59,7 +59,7 @@ async def test_secret_manager_already_exists_on_create(mock_sm_client):
 
 @pytest.mark.asyncio
 async def test_secret_manager_get_not_found(mock_sm_client):
-    storage = SecretManagerStorage(project_id="test-project", prefix="ge-mv")
+    storage = SecretManagerStorage(project_id="test-project", prefix="ge-test")
     mock_sm_client.access_secret_version.side_effect = NotFound("Secret not found")
 
     retrieved = await storage.get_session("non-existent")
@@ -68,17 +68,17 @@ async def test_secret_manager_get_not_found(mock_sm_client):
 
 @pytest.mark.asyncio
 async def test_secret_manager_delete(mock_sm_client):
-    storage = SecretManagerStorage(project_id="test-project", prefix="ge-mv")
+    storage = SecretManagerStorage(project_id="test-project", prefix="ge-test")
     await storage.delete_session("sess-to-del")
     assert mock_sm_client.delete_secret.called
 
 
 @pytest.mark.asyncio
 async def test_secret_manager_update_user_token(mock_sm_client):
-    storage = SecretManagerStorage(project_id="test-project", prefix="ge-mv")
+    storage = SecretManagerStorage(project_id="test-project", prefix="ge-test")
     user_tok = UserTokenData(
         proxy_access_token="tok-1",
-        metaview_access_token="mv-1",
+        upstream_access_token="up-1",
     )
     await storage.update_user_token("tok-1", user_tok)
     assert mock_sm_client.add_secret_version.called
@@ -98,9 +98,9 @@ async def test_update_user_token_destroys_superseded_versions(mock_sm_client):
     every upstream refresh, so without pruning a single long-lived session accumulates
     hundreds of active versions before the parent secret's TTL removes them.
     """
-    storage = SecretManagerStorage(project_id="test-project", prefix="ge-mv")
+    storage = SecretManagerStorage(project_id="test-project", prefix="ge-test")
 
-    secret_path = "projects/test-project/secrets/ge-mv-tok-tok-1"
+    secret_path = "projects/test-project/secrets/ge-test-tok-tok-1"
     new_version = _version(f"{secret_path}/versions/3")
     mock_sm_client.add_secret_version.return_value = new_version
     mock_sm_client.list_secret_versions.return_value = [
@@ -111,7 +111,7 @@ async def test_update_user_token_destroys_superseded_versions(mock_sm_client):
 
     await storage.update_user_token(
         "tok-1",
-        UserTokenData(proxy_access_token="tok-1", metaview_access_token="mv-1"),
+        UserTokenData(proxy_access_token="tok-1", upstream_access_token="up-1"),
     )
 
     destroyed = {
@@ -129,7 +129,7 @@ async def test_update_user_token_destroys_superseded_versions(mock_sm_client):
 @pytest.mark.asyncio
 async def test_ephemeral_secrets_are_not_pruned(mock_sm_client):
     """Sessions and auth codes use a fresh secret per value, so pruning is wasted work."""
-    storage = SecretManagerStorage(project_id="test-project", prefix="ge-mv")
+    storage = SecretManagerStorage(project_id="test-project", prefix="ge-test")
 
     await storage.save_session(
         "sess-1",
@@ -141,7 +141,7 @@ async def test_ephemeral_secrets_are_not_pruned(mock_sm_client):
     )
     await storage.save_auth_code(
         "code-1",
-        AuthCodeData(code="code-1", metaview_access_token="mv-1"),
+        AuthCodeData(code="code-1", upstream_access_token="up-1"),
     )
 
     assert not mock_sm_client.list_secret_versions.called
@@ -151,12 +151,12 @@ async def test_ephemeral_secrets_are_not_pruned(mock_sm_client):
 @pytest.mark.asyncio
 async def test_pruning_failure_does_not_break_token_write(mock_sm_client):
     """Pruning is a cost optimisation and must never fail the caller's write."""
-    storage = SecretManagerStorage(project_id="test-project", prefix="ge-mv")
+    storage = SecretManagerStorage(project_id="test-project", prefix="ge-test")
     mock_sm_client.list_secret_versions.side_effect = Exception("quota exceeded")
 
     await storage.update_user_token(
         "tok-1",
-        UserTokenData(proxy_access_token="tok-1", metaview_access_token="mv-1"),
+        UserTokenData(proxy_access_token="tok-1", upstream_access_token="up-1"),
     )
 
     assert mock_sm_client.add_secret_version.called
@@ -177,12 +177,12 @@ async def test_delete_user_token_also_removes_refresh_index(mock_sm_client):
     lookup index. Deleting only the first leaves the index behind, and the index alone
     is enough to resolve a request at /mcp, so the session would survive revocation.
     """
-    storage = SecretManagerStorage(project_id="test-project", prefix="ge-mv")
+    storage = SecretManagerStorage(project_id="test-project", prefix="ge-test")
     _stub_read(
         mock_sm_client,
         UserTokenData(
             proxy_access_token="tok-1",
-            metaview_access_token="mv-1",
+            upstream_access_token="up-1",
             proxy_refresh_token="ref-1",
         ),
     )
@@ -194,8 +194,8 @@ async def test_delete_user_token_also_removes_refresh_index(mock_sm_client):
         for call in mock_sm_client.delete_secret.call_args_list
     }
     assert deleted == {
-        "projects/test-project/secrets/ge-mv-tok-tok-1",
-        "projects/test-project/secrets/ge-mv-ref-ref-1",
+        "projects/test-project/secrets/ge-test-tok-tok-1",
+        "projects/test-project/secrets/ge-test-ref-ref-1",
     }
 
 
@@ -207,12 +207,12 @@ async def test_expire_user_token_leaves_refresh_index_alone(mock_sm_client):
     Rewriting it here - which `update_user_token` would do - would point it back at the
     token being retired and undo the rotation.
     """
-    storage = SecretManagerStorage(project_id="test-project", prefix="ge-mv")
+    storage = SecretManagerStorage(project_id="test-project", prefix="ge-test")
     _stub_read(
         mock_sm_client,
         UserTokenData(
             proxy_access_token="tok-old",
-            metaview_access_token="mv-1",
+            upstream_access_token="up-1",
             proxy_refresh_token="ref-1",
             proxy_expires_at=time.time() + 3600,
         ),
@@ -225,7 +225,7 @@ async def test_expire_user_token_leaves_refresh_index_alone(mock_sm_client):
         call.kwargs["request"]["parent"]
         for call in mock_sm_client.add_secret_version.call_args_list
     ]
-    assert written_to == ["projects/test-project/secrets/ge-mv-tok-tok-old"]
+    assert written_to == ["projects/test-project/secrets/ge-test-tok-tok-old"]
 
     payload = mock_sm_client.add_secret_version.call_args.kwargs["request"]["payload"]
     persisted = UserTokenData.model_validate_json(payload["data"].decode("utf-8"))
@@ -235,7 +235,7 @@ async def test_expire_user_token_leaves_refresh_index_alone(mock_sm_client):
 @pytest.mark.asyncio
 async def test_expire_user_token_on_missing_secret_is_a_noop(mock_sm_client):
     """A token already gone from storage needs no retirement."""
-    storage = SecretManagerStorage(project_id="test-project", prefix="ge-mv")
+    storage = SecretManagerStorage(project_id="test-project", prefix="ge-test")
     mock_sm_client.access_secret_version.side_effect = NotFound("gone")
 
     await storage.expire_user_token("tok-missing", time.time() + 60)

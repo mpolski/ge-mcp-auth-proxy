@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 import time
 from typing import Optional
-from pydantic import BaseModel, Field, AliasChoices
+from pydantic import BaseModel, Field
 
 
 class OAuthSessionData(BaseModel):
@@ -12,89 +12,30 @@ class OAuthSessionData(BaseModel):
     google_state: str
     google_code_challenge: Optional[str] = None
     google_code_challenge_method: Optional[str] = None
-    upstream_code_verifier: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("upstream_code_verifier", "metaview_code_verifier"),
-    )
+    upstream_code_verifier: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
-
-    @property
-    def metaview_code_verifier(self) -> Optional[str]:
-        return self.upstream_code_verifier
 
 
 class AuthCodeData(BaseModel):
     code: str
-    upstream_access_token: str = Field(
-        validation_alias=AliasChoices("upstream_access_token", "metaview_access_token"),
-    )
-    upstream_refresh_token: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("upstream_refresh_token", "metaview_refresh_token"),
-    )
-    upstream_expires_at: Optional[float] = Field(
-        default=None,
-        validation_alias=AliasChoices("upstream_expires_at", "metaview_expires_at"),
-    )
+    upstream_access_token: str
+    upstream_refresh_token: Optional[str] = None
+    upstream_expires_at: Optional[float] = None
     google_code_challenge: Optional[str] = None
     google_code_challenge_method: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 
-    @property
-    def metaview_access_token(self) -> str:
-        return self.upstream_access_token
-
-    @property
-    def metaview_refresh_token(self) -> Optional[str]:
-        return self.upstream_refresh_token
-
-    @property
-    def metaview_expires_at(self) -> Optional[float]:
-        return self.upstream_expires_at
-
 
 class UserTokenData(BaseModel):
     proxy_access_token: str
-    upstream_access_token: str = Field(
-        validation_alias=AliasChoices("upstream_access_token", "metaview_access_token"),
-    )
-    upstream_refresh_token: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("upstream_refresh_token", "metaview_refresh_token"),
-    )
-    upstream_expires_at: Optional[float] = Field(
-        default=None,
-        validation_alias=AliasChoices("upstream_expires_at", "metaview_expires_at"),
-    )
+    upstream_access_token: str
+    upstream_refresh_token: Optional[str] = None
+    upstream_expires_at: Optional[float] = None
     proxy_refresh_token: Optional[str] = None
     proxy_expires_at: Optional[float] = None
     proxy_refresh_expires_at: Optional[float] = None
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
-
-    @property
-    def metaview_access_token(self) -> str:
-        return self.upstream_access_token
-
-    @metaview_access_token.setter
-    def metaview_access_token(self, val: str):
-        self.upstream_access_token = val
-
-    @property
-    def metaview_refresh_token(self) -> Optional[str]:
-        return self.upstream_refresh_token
-
-    @metaview_refresh_token.setter
-    def metaview_refresh_token(self, val: Optional[str]):
-        self.upstream_refresh_token = val
-
-    @property
-    def metaview_expires_at(self) -> Optional[float]:
-        return self.upstream_expires_at
-
-    @metaview_expires_at.setter
-    def metaview_expires_at(self, val: Optional[float]):
-        self.upstream_expires_at = val
 
     def effective_proxy_expiry(self, default_lifetime_seconds: float) -> float:
         """Absolute epoch time at which the proxy access token stops being valid.
@@ -120,7 +61,8 @@ class UserTokenData(BaseModel):
 
         Anchored to `created_at`, which is the original sign-in and is deliberately
         left untouched by the refresh grant. Re-anchoring on each refresh would let a
-        session renew itself forever and never force the user back through Metaview.
+        session renew itself forever and never force the user back through the
+        upstream provider's sign-in.
         """
         if self.proxy_refresh_expires_at is not None:
             return self.proxy_refresh_expires_at
@@ -169,7 +111,7 @@ class StorageBackend(ABC):
 
     @abstractmethod
     async def save_user_token(self, proxy_access_token: str, data: UserTokenData, ttl_seconds: int = 86400 * 30) -> None:
-        """Save an active user's proxy and Metaview tokens."""
+        """Save an active user's proxy and upstream tokens."""
         pass
 
     @abstractmethod
@@ -179,7 +121,7 @@ class StorageBackend(ABC):
 
     @abstractmethod
     async def update_user_token(self, proxy_access_token: str, data: UserTokenData) -> None:
-        """Update tokens when a Metaview access token is refreshed."""
+        """Update tokens when an upstream access token is refreshed."""
         pass
 
     @abstractmethod

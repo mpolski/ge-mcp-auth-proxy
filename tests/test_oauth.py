@@ -41,13 +41,13 @@ async def test_oauth_authorize_success(async_client: AsyncClient, configure_test
     resp = await async_client.get("/oauth/authorize", params=params, follow_redirects=False)
     assert resp.status_code == 302
     location = resp.headers["location"]
-    assert "https://auth.metaview.ai/oauth2/authorize" in location
+    assert "https://auth.example.com/oauth2/authorize" in location
 
     parsed = urllib.parse.urlparse(location)
     q = urllib.parse.parse_qs(parsed.query)
-    assert q["client_id"] == [settings.METAVIEW_CLIENT_ID]
+    assert q["client_id"] == [settings.UPSTREAM_CLIENT_ID]
     assert q["redirect_uri"] == [f"{settings.PROXY_BASE_URL}/oauth/callback"]
-    assert q["resource"] == [settings.METAVIEW_MCP_URL]
+    assert q["resource"] == [settings.UPSTREAM_MCP_URL]
     session_id = q["state"][0]
 
     # Verify session was persisted in storage
@@ -83,19 +83,19 @@ async def test_oauth_callback_success(async_client: AsyncClient, configure_test_
     )
     await store.save_session(session_id, session_data)
 
-    mock_metaview_response = {
-        "access_token": "mv-access-tok-111",
+    mock_upstream_response = {
+        "access_token": "up-access-tok-111",
         "token_type": "Bearer",
         "expires_in": 3600,
-        "refresh_token": "mv-refresh-tok-222",
+        "refresh_token": "up-refresh-tok-222",
     }
 
     with patch("httpx.AsyncClient.post") as mock_post:
-        mock_post.return_value = Response(200, json=mock_metaview_response)
+        mock_post.return_value = Response(200, json=mock_upstream_response)
 
         resp = await async_client.get(
             "/oauth/callback",
-            params={"code": "mv-auth-code-999", "state": session_id},
+            params={"code": "up-auth-code-999", "state": session_id},
             follow_redirects=False,
         )
 
@@ -111,11 +111,11 @@ async def test_oauth_callback_success(async_client: AsyncClient, configure_test_
     # Verify session was deleted
     assert await store.get_session(session_id) is None
 
-    # Verify auth code was saved with Metaview tokens
+    # Verify auth code was saved with upstream tokens
     saved_code = await store.get_auth_code(proxy_auth_code)
     assert saved_code is not None
-    assert saved_code.metaview_access_token == "mv-access-tok-111"
-    assert saved_code.metaview_refresh_token == "mv-refresh-tok-222"
+    assert saved_code.upstream_access_token == "up-access-tok-111"
+    assert saved_code.upstream_refresh_token == "up-refresh-tok-222"
     assert saved_code.google_code_challenge == "challenge-123"
 
 
@@ -153,8 +153,8 @@ async def test_oauth_token_exchange_form_auth(async_client: AsyncClient, configu
     code = "auth-code-valid"
     code_data = AuthCodeData(
         code=code,
-        metaview_access_token="mv-acc-555",
-        metaview_refresh_token="mv-ref-666",
+        upstream_access_token="up-acc-555",
+        upstream_refresh_token="up-ref-666",
     )
     await store.save_auth_code(code, code_data)
 
@@ -174,12 +174,12 @@ async def test_oauth_token_exchange_form_auth(async_client: AsyncClient, configu
     # Verify code is single-use and now deleted
     assert await store.get_auth_code(code) is None
 
-    # Verify user token is stored and maps to Metaview token
+    # Verify user token is stored and maps to the upstream token
     proxy_token = token_json["access_token"]
     user_tok = await store.get_user_token(proxy_token)
     assert user_tok is not None
-    assert user_tok.metaview_access_token == "mv-acc-555"
-    assert user_tok.metaview_refresh_token == "mv-ref-666"
+    assert user_tok.upstream_access_token == "up-acc-555"
+    assert user_tok.upstream_refresh_token == "up-ref-666"
 
 
 @pytest.mark.asyncio
@@ -188,7 +188,7 @@ async def test_oauth_token_exchange_basic_auth(async_client: AsyncClient, config
     code = "auth-code-basic"
     code_data = AuthCodeData(
         code=code,
-        metaview_access_token="mv-acc-777",
+        upstream_access_token="up-acc-777",
     )
     await store.save_auth_code(code, code_data)
 
@@ -215,7 +215,7 @@ async def test_oauth_token_pkce_verification(async_client: AsyncClient, configur
     code = "auth-code-pkce"
     code_data = AuthCodeData(
         code=code,
-        metaview_access_token="mv-acc-pkce",
+        upstream_access_token="up-acc-pkce",
         google_code_challenge=challenge,
         google_code_challenge_method="S256",
     )
@@ -274,7 +274,7 @@ async def test_test_console_not_mounted_by_default(async_client: AsyncClient):
     rendered GE_CLIENT_SECRET into the returned HTML and `/test/active-token` returned
     a live proxy access token, both without authentication, so on a service deployed
     with --allow-unauthenticated they formed a complete anonymous path to a user's
-    Metaview data.
+    upstream SaaS data.
     """
     assert settings.ENABLE_TEST_CONSOLE is False
 

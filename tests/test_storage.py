@@ -42,14 +42,14 @@ async def test_auth_code_lifecycle():
     store = MemoryStorage()
     code_data = AuthCodeData(
         code="code-456",
-        metaview_access_token="mv-acc-token",
-        metaview_refresh_token="mv-ref-token",
+        upstream_access_token="up-acc-token",
+        upstream_refresh_token="up-ref-token",
     )
     await store.save_auth_code("code-456", code_data, ttl_seconds=300)
 
     retrieved = await store.get_auth_code("code-456")
     assert retrieved is not None
-    assert retrieved.metaview_access_token == "mv-acc-token"
+    assert retrieved.upstream_access_token == "up-acc-token"
 
     await store.delete_auth_code("code-456")
     assert await store.get_auth_code("code-456") is None
@@ -60,19 +60,19 @@ async def test_user_token_lifecycle_and_update():
     store = MemoryStorage()
     user_data = UserTokenData(
         proxy_access_token="proxy-tok-789",
-        metaview_access_token="mv-tok-initial",
-        metaview_refresh_token="mv-ref-1",
+        upstream_access_token="up-tok-initial",
+        upstream_refresh_token="up-ref-1",
     )
     await store.save_user_token("proxy-tok-789", user_data)
 
     retrieved = await store.get_user_token("proxy-tok-789")
     assert retrieved is not None
-    assert retrieved.metaview_access_token == "mv-tok-initial"
+    assert retrieved.upstream_access_token == "up-tok-initial"
 
     # Update token on refresh
-    user_data.metaview_access_token = "mv-tok-refreshed"
+    user_data.upstream_access_token = "up-tok-refreshed"
     await store.update_user_token("proxy-tok-789", user_data)
 
     updated = await store.get_user_token("proxy-tok-789")
     assert updated is not None
-    assert updated.metaview_access_token == "mv-tok-refreshed"
+    assert updated.upstream_access_token == "up-tok-refreshed"

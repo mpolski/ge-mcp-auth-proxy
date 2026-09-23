@@ -22,28 +22,51 @@ Gemini Enterprise registers each tool against its corresponding Cloud Run URL. A
 
 The included `deploy.sh` script automates enabling GCP APIs, creating least-privilege IAM roles, creating Secret Manager credentials, deploying Cloud Run, and executing RFC 7591 Dynamic Client Registration where supported.
 
-### Deploy Metaview (Default)
+> [!IMPORTANT]
+> `VENDOR` is **required**. There is no default vendor: the script exits if it is unset,
+> and the application itself refuses to start without upstream endpoints. `metaview`,
+> `carta` and `greenhouse` are preset profiles; any other name is accepted but you must
+> supply `UPSTREAM_AUTH_URL`, `UPSTREAM_TOKEN_URL` and `UPSTREAM_MCP_URL` yourself.
+
+> [!NOTE]
+> Verification status: the Metaview profile has been tested end-to-end against a live
+> Gemini Enterprise connector on 2026-09-23. Carta and Greenhouse are configured from
+> their published OAuth discovery documents but have NOT been verified against a live
+> tenant.
+
+### Deploy Metaview
 ```bash
-export GCP_PROJECT_ID="your-project-id"
-./deploy.sh
+export GCP_PROJECT_ID="<YOUR_PROJECT_ID>"
+VENDOR=metaview ./deploy.sh
 ```
 
 ### Deploy Carta
 
-Carta requires a public PKCE client; do not set `UPSTREAM_CLIENT_SECRET`.
-The client ID is obtained automatically via Dynamic Client Registration.
+Carta advertises `token_endpoint_auth_methods_supported = ["none", "private_key_jwt"]`,
+so there is no client secret option at all: leave `UPSTREAM_CLIENT_SECRET` empty and
+deploy as a public PKCE client. The client ID is obtained automatically via Dynamic
+Client Registration.
 
 ```bash
-export GCP_PROJECT_ID="your-project-id"
-export VENDOR="carta"
-./deploy.sh
+export GCP_PROJECT_ID="<YOUR_PROJECT_ID>"
+VENDOR=carta ./deploy.sh
 ```
 
 ### Deploy Greenhouse
 ```bash
-export GCP_PROJECT_ID="your-project-id"
-export VENDOR="greenhouse"
-./deploy.sh
+export GCP_PROJECT_ID="<YOUR_PROJECT_ID>"
+VENDOR=greenhouse ./deploy.sh
+```
+
+### Deploy another provider
+
+```bash
+export GCP_PROJECT_ID="<YOUR_PROJECT_ID>"
+VENDOR=acme \
+  UPSTREAM_AUTH_URL="https://auth.example.com/authorize" \
+  UPSTREAM_TOKEN_URL="https://auth.example.com/token" \
+  UPSTREAM_MCP_URL="https://mcp.example.com/mcp" \
+  ./deploy.sh
 ```
 
 `deploy.sh` is a thin wrapper around the numbered steps below. If you prefer, run each step manually.
@@ -55,12 +78,14 @@ export VENDOR="greenhouse"
 ### 0. Set your variables
 
 ```bash
-export PROJECT_ID="your-project-id"
+export PROJECT_ID="<YOUR_PROJECT_ID>"
 export REGION="us-central1"
-export VENDOR="metaview"  # or carta, greenhouse, custom
+export VENDOR="metaview"  # required: metaview, carta, greenhouse, or your own name
 export SERVICE_NAME="ge-${VENDOR}-proxy"
 export SA_NAME="${VENDOR}-proxy-sa"
 export SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+# Secret Manager namespace: ge- plus the first four characters of VENDOR.
+# metaview -> ge-meta, carta -> ge-cart, greenhouse -> ge-gree.
 export SECRET_PREFIX="ge-${VENDOR:0:4}"
 ```
 
@@ -159,18 +184,25 @@ PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(proje
 # Upstream endpoints for the chosen vendor. Values below were read from each
 # provider's own OAuth discovery documents; see deploy.sh for the full presets.
 #
-#   metaview    auth  https://auth.metaview.ai/oauth2/authorize
-#               token https://auth.metaview.ai/oauth2/token
-#               mcp   https://mcp.metaview.ai/mcp
-#   carta       auth  https://mcp.app.carta.com/authorize
-#               token https://mcp.app.carta.com/token
-#               mcp   https://mcp.app.carta.com/mcp
-#   greenhouse  auth  https://auth.greenhouse.io/authorize
-#               token https://auth.greenhouse.io/token
-#               mcp   https://mcp.greenhouse.io/mcp
+#   metaview    auth   https://auth.metaview.ai/oauth2/authorize
+#               token  https://auth.metaview.ai/oauth2/token
+#               mcp    https://mcp.metaview.ai/mcp
+#               dcr    https://auth.metaview.ai/oauth2/register
+#               scopes openid profile email offline_access
+#   carta       auth   https://mcp.app.carta.com/authorize
+#               token  https://mcp.app.carta.com/token
+#               mcp    https://mcp.app.carta.com/mcp
+#               dcr    https://mcp.app.carta.com/register
+#               scopes openid cuid read_mcp_firms read_mcp_companies read_mcp_crm
+#   greenhouse  auth   https://auth.greenhouse.io/authorize
+#               token  https://auth.greenhouse.io/token
+#               mcp    https://mcp.greenhouse.io/mcp
+#               dcr    https://mcp.greenhouse.io/oauth/register
+#               scopes greenhouse:mcp_client   (offline_access is not accepted)
 export UPSTREAM_AUTH_URL="https://auth.metaview.ai/oauth2/authorize"
 export UPSTREAM_TOKEN_URL="https://auth.metaview.ai/oauth2/token"
 export UPSTREAM_MCP_URL="https://mcp.metaview.ai/mcp"
+export UPSTREAM_REGISTRATION_URL="https://auth.metaview.ai/oauth2/register"
 
 gcloud run deploy "${SERVICE_NAME}" \
     --source . \
@@ -195,9 +227,22 @@ gcloud run deploy "${SERVICE_NAME}" \
 ```
 
 > [!IMPORTANT]
+> The application refuses to start unless `UPSTREAM_CLIENT_ID`, `UPSTREAM_AUTH_URL`,
+> `UPSTREAM_TOKEN_URL`, `UPSTREAM_MCP_URL` and `GE_CLIENT_SECRET` all have values
+> (the check is skipped only when `STORAGE_BACKEND=memory`, i.e. in tests). None of
+> them has a vendor default any more.
+>
+> That is why the first deploy passes `UPSTREAM_CLIENT_ID=${UPSTREAM_CLIENT_ID:-placeholder}`:
+> the real client ID does not exist until Dynamic Client Registration runs in step 6,
+> which needs the service URL that only exists after this deploy. Step 7 replaces the
+> placeholder. Sign-in will fail until it does.
+
+> [!IMPORTANT]
 > The command above deliberately does **not** mount `UPSTREAM_CLIENT_SECRET`.
 > Providers onboarded through RFC 7591 Dynamic Client Registration are registered as
 > *public* clients (`token_endpoint_auth_method=none`) and have no secret at all.
+> Carta goes further and advertises only `none` and `private_key_jwt`, so a secret is
+> never valid there.
 >
 > Two traps follow from this:
 >
@@ -231,10 +276,10 @@ echo "${SERVICE_URL}"
 
 ### 6. Dynamic Client Registration (RFC 7591)
 
-If the provider supports RFC 7591 Dynamic Client Registration (e.g. Metaview), register the newly assigned Cloud Run callback URI:
+If the provider supports RFC 7591 Dynamic Client Registration, register the newly assigned Cloud Run callback URI against that provider's registration endpoint (`UPSTREAM_REGISTRATION_URL`, set in step 5):
 
 ```bash
-curl -fsS -X POST "https://auth.metaview.ai/oauth2/register" \
+curl -fsS -X POST "${UPSTREAM_REGISTRATION_URL}" \
     -H "Content-Type: application/json" \
     -d "{
       \"client_name\": \"Gemini Enterprise ${VENDOR} Proxy\",
@@ -247,7 +292,7 @@ curl -fsS -X POST "https://auth.metaview.ai/oauth2/register" \
 
 Extract `client_id` from the JSON response as your `UPSTREAM_CLIENT_ID`.
 
-*(Alternatively, run `python3 -m app.oauth.dcr --registration-url https://auth.metaview.ai/oauth2/register --redirect-uri "${SERVICE_URL}/oauth/callback"`).*
+*(Alternatively, run `python3 -m app.oauth.dcr --registration-url "${UPSTREAM_REGISTRATION_URL}" --redirect-uri "${SERVICE_URL}/oauth/callback"`).*
 
 ### 7. Apply the resolved public URL and client ID
 
@@ -339,11 +384,12 @@ gcloud run services update-traffic "${SERVICE_NAME}" \
 
 ## Troubleshooting
 
-| Symptom | Likely cause |
-|---|---|
-| `403` from Secret Manager at startup | Custom role not bound, or IAM propagation delay (wait ~60s) |
-| All `/mcp` calls return `401` | `PROXY_BASE_URL` not applied in step 7, so sign-in redirects never complete |
-| Sign-in fails with invalid redirect URI | Step 6 not run, or run before the service URL existed |
-| Traces missing in Cloud Trace | `roles/cloudtrace.agent` not granted, or `GCP_PROJECT_NUMBER` unset |
-| `/test` returns 404 | Expected. The test console is enabled for local development only. |
-| `POST /oauth/token` returns `400 invalid_grant` with `PKCE verification failed` | Gemini Enterprise replayed a stale `code_challenge`. Remove and re-add the connector to force a fresh PKCE pair. The broker logs the expected and computed challenge so you can confirm. |
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Revision fails to start; logs show `Refusing to start: required settings are unset: ...` | One or more of `UPSTREAM_CLIENT_ID`, `UPSTREAM_AUTH_URL`, `UPSTREAM_TOKEN_URL`, `UPSTREAM_MCP_URL`, `GE_CLIENT_SECRET` is empty. There are no vendor defaults, and the check is bypassed only when `STORAGE_BACKEND=memory`. | Set the variable named in the message and redeploy: endpoints via `--set-env-vars`, `GE_CLIENT_SECRET` via `--set-secrets`. |
+| `403` from Secret Manager at startup | Custom role not bound, or IAM propagation delay | Wait ~60s and retry; confirm the binding from step 3. |
+| All `/mcp` calls return `401` | `PROXY_BASE_URL` not applied in step 7, so sign-in redirects never complete | Run step 7 with the real service URL. |
+| Sign-in fails with invalid redirect URI | Step 6 not run, or run before the service URL existed | Re-run Dynamic Client Registration with `${SERVICE_URL}/oauth/callback`, then apply the returned client ID. |
+| Traces missing in Cloud Trace | `roles/cloudtrace.agent` not granted, or `GCP_PROJECT_NUMBER` unset | Grant the role (step 3) and set `GCP_PROJECT_NUMBER`. |
+| `/test` returns 404 | Expected. The test console is enabled for local development only. | No action. |
+| `POST /oauth/token` returns `400 invalid_grant` with `PKCE verification failed` | Gemini Enterprise replayed a stale `code_challenge`. | Remove and re-add the connector to force a fresh PKCE pair. The broker logs the expected and computed challenge so you can confirm. |

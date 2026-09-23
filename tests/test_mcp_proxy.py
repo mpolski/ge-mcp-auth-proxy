@@ -28,8 +28,8 @@ async def test_mcp_token_swap_and_proxy(async_client: AsyncClient, configure_tes
     proxy_token_a = "proxy-tok-user-a"
     user_a_data = UserTokenData(
         proxy_access_token=proxy_token_a,
-        metaview_access_token="mv-secret-token-a",
-        metaview_refresh_token="mv-refresh-a",
+        upstream_access_token="up-secret-token-a",
+        upstream_refresh_token="up-refresh-a",
     )
     await store.save_user_token(proxy_token_a, user_a_data)
 
@@ -66,7 +66,7 @@ async def test_mcp_token_swap_and_proxy(async_client: AsyncClient, configure_tes
     assert resp.json() == mcp_upstream_response
 
     # Verify per-user token translation in upstream request
-    assert captured_headers.get("Authorization") == "Bearer mv-secret-token-a"
+    assert captured_headers.get("Authorization") == "Bearer up-secret-token-a"
 
 
 @pytest.mark.asyncio
@@ -77,14 +77,14 @@ async def test_mcp_multi_user_isolation(async_client: AsyncClient, configure_tes
     tok_a = "proxy-token-user-a"
     await store.save_user_token(
         tok_a,
-        UserTokenData(proxy_access_token=tok_a, metaview_access_token="mv-token-user-a"),
+        UserTokenData(proxy_access_token=tok_a, upstream_access_token="up-token-user-a"),
     )
 
     # User B
     tok_b = "proxy-token-user-b"
     await store.save_user_token(
         tok_b,
-        UserTokenData(proxy_access_token=tok_b, metaview_access_token="mv-token-user-b"),
+        UserTokenData(proxy_access_token=tok_b, upstream_access_token="up-token-user-b"),
     )
 
     call_history = []
@@ -108,8 +108,8 @@ async def test_mcp_multi_user_isolation(async_client: AsyncClient, configure_tes
         )
 
     assert call_history == [
-        "Bearer mv-token-user-a",
-        "Bearer mv-token-user-b",
+        "Bearer up-token-user-a",
+        "Bearer up-token-user-b",
     ]
 
 
@@ -119,8 +119,8 @@ async def test_mcp_auto_refresh_on_401(async_client: AsyncClient, configure_test
     proxy_token = "proxy-tok-stale"
     user_data = UserTokenData(
         proxy_access_token=proxy_token,
-        metaview_access_token="mv-expired-token",
-        metaview_refresh_token="mv-valid-refresh-token",
+        upstream_access_token="up-expired-token",
+        upstream_refresh_token="up-valid-refresh-token",
     )
     await store.save_user_token(proxy_token, user_data)
 
@@ -132,16 +132,16 @@ async def test_mcp_auto_refresh_on_401(async_client: AsyncClient, configure_test
         auth = headers.get("Authorization")
 
         # First call with expired token returns 401
-        if auth == "Bearer mv-expired-token":
+        if auth == "Bearer up-expired-token":
             return Response(401, text="Unauthorized token expired")
         # Second call with refreshed token returns 200
-        elif auth == "Bearer mv-fresh-access-token":
+        elif auth == "Bearer up-fresh-access-token":
             return Response(200, json={"jsonrpc": "2.0", "result": "refreshed_success"})
         return Response(400)
 
     mock_refresh_payload = {
-        "access_token": "mv-fresh-access-token",
-        "refresh_token": "mv-new-refresh-token",
+        "access_token": "up-fresh-access-token",
+        "refresh_token": "up-new-refresh-token",
         "expires_in": 3600,
     }
 
@@ -159,19 +159,19 @@ async def test_mcp_auto_refresh_on_401(async_client: AsyncClient, configure_test
     assert resp.status_code == 200
     assert resp.json()["result"] == "refreshed_success"
     assert mcp_call_count == 2
-    mock_refresh.assert_called_once_with("mv-valid-refresh-token")
+    mock_refresh.assert_called_once_with("up-valid-refresh-token")
 
     # Verify store was updated with the fresh token
     updated_user_tok = await store.get_user_token(proxy_token)
-    assert updated_user_tok.metaview_access_token == "mv-fresh-access-token"
-    assert updated_user_tok.metaview_refresh_token == "mv-new-refresh-token"
+    assert updated_user_tok.upstream_access_token == "up-fresh-access-token"
+    assert updated_user_tok.upstream_refresh_token == "up-new-refresh-token"
 
 
 @pytest.mark.asyncio
 async def test_mcp_unknown_jwt_is_rejected_not_mapped_to_another_user(
     async_client: AsyncClient, configure_test_environment
 ):
-    """An unrecognised token must never resolve to somebody else's Metaview session.
+    """An unrecognised token must never resolve to somebody else's upstream session.
 
     Regression test. The proxy previously fell back to `get_latest_user_token()` for
     any token it could not resolve, so an arbitrary bearer string was served using the
@@ -181,7 +181,7 @@ async def test_mcp_unknown_jwt_is_rejected_not_mapped_to_another_user(
     proxy_token = "proxy-tok-governed-user"
     user_data = UserTokenData(
         proxy_access_token=proxy_token,
-        metaview_access_token="mv-governed-token",
+        upstream_access_token="up-governed-token",
         proxy_refresh_token="proxy-ref-governed",
     )
     await store.save_user_token(proxy_token, user_data)
@@ -201,7 +201,7 @@ async def test_mcp_unknown_jwt_is_rejected_not_mapped_to_another_user(
         )
 
     assert resp.status_code == 401
-    # Nothing may reach Metaview using another user's credentials.
+    # Nothing may reach the upstream provider using another user's credentials.
     assert forwarded == []
 
 
@@ -215,7 +215,7 @@ async def test_mcp_garbage_token_does_not_borrow_active_session(
         "real-user-token",
         UserTokenData(
             proxy_access_token="real-user-token",
-            metaview_access_token="mv-real-user-token",
+            upstream_access_token="up-real-user-token",
         ),
     )
 
@@ -246,7 +246,7 @@ async def test_oauth_refresh_grant_rejects_unknown_refresh_token(
         "some-user-token",
         UserTokenData(
             proxy_access_token="some-user-token",
-            metaview_access_token="mv-some-user",
+            upstream_access_token="up-some-user",
             proxy_refresh_token="the-real-refresh-token",
         ),
     )
@@ -273,7 +273,7 @@ async def test_oauth_refresh_token_grant(async_client: AsyncClient, configure_te
     refresh_token = "proxy-refresh-token-123"
     user_data = UserTokenData(
         proxy_access_token=proxy_token,
-        metaview_access_token="mv-token-abc",
+        upstream_access_token="up-token-abc",
         proxy_refresh_token=refresh_token,
     )
     await store.save_user_token(proxy_token, user_data)

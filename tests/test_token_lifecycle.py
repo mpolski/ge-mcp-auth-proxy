@@ -30,8 +30,8 @@ async def _mint_session(async_client: AsyncClient, store, code: str = "lifecycle
         code,
         AuthCodeData(
             code=code,
-            metaview_access_token="mv-acc-lifecycle",
-            metaview_refresh_token="mv-ref-lifecycle",
+            upstream_access_token="up-acc-lifecycle",
+            upstream_refresh_token="up-ref-lifecycle",
         ),
     )
     resp = await async_client.post(
@@ -72,14 +72,14 @@ async def test_authorization_code_grant_stamps_expiry(async_client: AsyncClient,
 
 @pytest.mark.asyncio
 async def test_mcp_rejects_expired_proxy_access_token(async_client: AsyncClient, configure_test_environment):
-    """An expired proxy token must not reach Metaview."""
+    """An expired proxy token must not reach the upstream provider."""
     store = configure_test_environment
     token = "proxy-tok-expired"
     await store.save_user_token(
         token,
         UserTokenData(
             proxy_access_token=token,
-            metaview_access_token="mv-should-not-be-used",
+            upstream_access_token="up-should-not-be-used",
             proxy_expires_at=time.time() - 1,
         ),
     )
@@ -111,7 +111,7 @@ async def test_mcp_accepts_unexpired_proxy_access_token(async_client: AsyncClien
         token,
         UserTokenData(
             proxy_access_token=token,
-            metaview_access_token="mv-fresh",
+            upstream_access_token="up-fresh",
             proxy_expires_at=time.time() + 300,
         ),
     )
@@ -145,7 +145,7 @@ async def test_legacy_record_without_expiry_falls_back_to_created_at(
         token,
         UserTokenData(
             proxy_access_token=token,
-            metaview_access_token="mv-legacy",
+            upstream_access_token="up-legacy",
             created_at=time.time() - (settings.PROXY_ACCESS_TOKEN_EXPIRES_IN + 60),
         ),
     )
@@ -161,7 +161,7 @@ async def test_legacy_record_without_expiry_falls_back_to_created_at(
     recent = "proxy-tok-legacy-recent"
     await store.save_user_token(
         recent,
-        UserTokenData(proxy_access_token=recent, metaview_access_token="mv-legacy-recent"),
+        UserTokenData(proxy_access_token=recent, upstream_access_token="up-legacy-recent"),
     )
 
     async def mock_forward(body, headers):
@@ -192,7 +192,7 @@ async def test_mcp_refresh_token_lookup_uses_refresh_lifetime(
         token,
         UserTokenData(
             proxy_access_token=token,
-            metaview_access_token="mv-by-refresh",
+            upstream_access_token="up-by-refresh",
             proxy_refresh_token=refresh,
             proxy_expires_at=time.time() - 1,
             proxy_refresh_expires_at=time.time() + 86400,
@@ -213,14 +213,14 @@ async def test_mcp_refresh_token_lookup_uses_refresh_lifetime(
         )
 
     assert resp.status_code == 200
-    assert captured == ["Bearer mv-by-refresh"]
+    assert captured == ["Bearer up-by-refresh"]
 
     # Past its own ceiling, the refresh token stops working here too.
     await store.save_user_token(
         token,
         UserTokenData(
             proxy_access_token=token,
-            metaview_access_token="mv-by-refresh",
+            upstream_access_token="up-by-refresh",
             proxy_refresh_token=refresh,
             proxy_refresh_expires_at=time.time() - 1,
         ),
@@ -340,7 +340,7 @@ async def test_refresh_succeeds_after_access_token_expires(
         token,
         UserTokenData(
             proxy_access_token=token,
-            metaview_access_token="mv-aged",
+            upstream_access_token="up-aged",
             proxy_refresh_token=refresh,
             proxy_expires_at=time.time() - 1,
             proxy_refresh_expires_at=time.time() + 86400,
@@ -362,7 +362,7 @@ async def test_refresh_rejected_past_absolute_expiry(
     """A session cannot renew itself indefinitely.
 
     The refresh ceiling is anchored to the original sign-in, so after 30 days the user
-    is sent back through Metaview rather than being silently extended forever.
+    is sent back through the upstream provider rather than being silently extended forever.
     """
     store = configure_test_environment
     token = "proxy-tok-ancient"
@@ -371,7 +371,7 @@ async def test_refresh_rejected_past_absolute_expiry(
         token,
         UserTokenData(
             proxy_access_token=token,
-            metaview_access_token="mv-ancient",
+            upstream_access_token="up-ancient",
             proxy_refresh_token=refresh,
             proxy_refresh_expires_at=time.time() - 1,
         ),

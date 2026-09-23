@@ -1,10 +1,10 @@
-"""Local development test console for the Metaview & Gemini Enterprise OAuth 2.0 MCP Proxy.
+"""Local development test console for the Gemini Enterprise OAuth 2.0 MCP Identity Broker.
 
 > SECURITY: These routes are for localhost development only and are NOT mounted
 > unless `ENABLE_TEST_CONSOLE=true`. `/test/active-token` deliberately returns a live
 > proxy access token for the most recent sign-in and performs no authentication, so
 > exposing this router on a public endpoint would let any anonymous caller read that
-> user's Metaview data. See app/main.py for the mounting logic.
+> user's upstream SaaS data. See app/main.py for the mounting logic.
 """
 
 import logging
@@ -29,12 +29,18 @@ def _require_console_enabled() -> None:
     if not settings.ENABLE_TEST_CONSOLE:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
 
+
+def _upstream_display_name() -> str:
+    """Human-readable label for the configured upstream, for console copy only."""
+    return (settings.UPSTREAM_SERVICE_NAME or "upstream").replace("_", " ").replace("-", " ").title()
+
+
 TEST_PAGE_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Metaview & Gemini Enterprise OAuth 2.0 Test Console</title>
+  <title>Gemini Enterprise MCP Identity Broker &mdash; Test Console</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -178,8 +184,8 @@ TEST_PAGE_HTML = """<!DOCTYPE html>
   <div class="container">
     <div class="card">
       <div class="badge">Identity Broker Proxy &bull; Local Sandbox</div>
-      <h1>Metaview &amp; Gemini Enterprise</h1>
-      <p class="lead">Test end-to-end 3-legged OAuth 2.0 authentication and live Model Context Protocol (MCP) tool execution with your Metaview account.</p>
+      <h1>__UPSTREAM_NAME__ &amp; Gemini Enterprise</h1>
+      <p class="lead">Test end-to-end 3-legged OAuth 2.0 authentication and live Model Context Protocol (MCP) tool execution with your __UPSTREAM_NAME__ account.</p>
       
       <div class="specs">
         <div class="spec-item">
@@ -196,7 +202,7 @@ TEST_PAGE_HTML = """<!DOCTYPE html>
         </div>
         <div class="spec-item">
           <span class="spec-label">Target MCP Upstream</span>
-          <span class="spec-value">https://mcp.metaview.ai/mcp</span>
+          <span class="spec-value">__UPSTREAM_MCP_URL__</span>
         </div>
       </div>
 
@@ -206,10 +212,10 @@ TEST_PAGE_HTML = """<!DOCTYPE html>
           <polyline points="10 17 15 12 10 7"></polyline>
           <line x1="15" y1="12" x2="3" y2="12"></line>
         </svg>
-        Authenticate with Metaview (OAuth 2.0)
+        Authenticate with __UPSTREAM_NAME__ (OAuth 2.0)
       </a>
 
-      <p class="footer-note">Redirects to Metaview sign-in &rarr; Captures Authorization Code &rarr; Mints Proxy Bearer Token &rarr; Calls MCP.</p>
+      <p class="footer-note">Redirects to __UPSTREAM_NAME__ sign-in &rarr; Captures Authorization Code &rarr; Mints Proxy Bearer Token &rarr; Calls MCP.</p>
     </div>
   </div>
 </body>
@@ -382,7 +388,7 @@ CALLBACK_PAGE_HTML = """<!DOCTYPE html>
     <div class="header">
       <div>
         <h1 style="font-size: 1.6rem; font-weight: 700;">OAuth 2.0 Testing Console</h1>
-        <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 0.2rem;">Connected to Metaview with authenticated user session</p>
+        <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 0.2rem;">Connected to __UPSTREAM_NAME__ with authenticated user session</p>
       </div>
       <div style="display: flex; align-items: center; gap: 0.75rem;">
         <a href="__AUTH_LINK__" class="btn secondary" style="text-decoration: none; padding: 0.4rem 0.8rem; font-size: 0.85rem;">🔑 New Sign-In</a>
@@ -399,7 +405,7 @@ CALLBACK_PAGE_HTML = """<!DOCTYPE html>
         <span class="step-num">1</span>
         <span>Proxy Authorization Code</span>
       </div>
-      <p style="color: var(--text-muted); font-size: 0.9rem;">Metaview tokens are secured in Google Cloud Secret Manager (__GCP_PROJECT_ID__). Authorization code / session status:</p>
+      <p style="color: var(--text-muted); font-size: 0.9rem;">__UPSTREAM_NAME__ tokens are secured in Google Cloud Secret Manager (__GCP_PROJECT_ID__). Authorization code / session status:</p>
       <div class="code-box" id="authCodeBox">Checking OAuth session status...</div>
     </div>
 
@@ -422,19 +428,29 @@ CALLBACK_PAGE_HTML = """<!DOCTYPE html>
     <div class="step-card" id="mcpCard" style="opacity: 0.5; pointer-events: none;">
       <div class="step-title">
         <span class="step-num">3</span>
-        <span>Query Metaview MCP Server via Proxy</span>
+        <span>Query __UPSTREAM_NAME__ MCP Server via Proxy</span>
       </div>
-      <p style="color: var(--text-muted); font-size: 0.9rem;">Issue live JSON-RPC requests to <code>POST /mcp</code>. The proxy swaps your session token for the live Metaview OAuth token:</p>
+      <p style="color: var(--text-muted); font-size: 0.9rem;">Issue live JSON-RPC requests to <code>POST /mcp</code>. The proxy swaps your session token for the live __UPSTREAM_NAME__ OAuth token:</p>
       
       <div class="btn-group">
         <button class="btn accent" onclick="runMcpRequest('tools/list', {})">
-          <span>📋 1. Discover Tools (tools/list)</span>
+          <span>&#128203; 1. Discover Tools (tools/list)</span>
         </button>
-        <button class="btn" style="background: #10b981;" onclick="runGetUserContext()">
-          <span>👤 2. Get User Context (get_user_context)</span>
+        <button class="btn" style="background: #10b981;" onclick="runInitialize()">
+          <span>&#128268; 2. Initialize Session (initialize)</span>
         </button>
-        <button class="btn secondary" onclick="runSampleSearch()">
-          <span>🔍 3. Sample Question (Search Interviews)</span>
+      </div>
+
+      <!-- Tool names and argument shapes are provider-specific, so the console
+           cannot ship a meaningful hardcoded example. Run tools/list first and
+           paste a tool name and its arguments here. -->
+      <div class="btn-group" style="align-items: center;">
+        <input id="toolNameInput" class="code-box" style="margin-top: 0; flex: 1 1 200px; color: var(--text);"
+               placeholder="tool name from tools/list" />
+        <input id="toolArgsInput" class="code-box" style="margin-top: 0; flex: 2 1 320px; color: var(--text);"
+               placeholder='arguments as JSON, e.g. {"limit": 10}' value="{}" />
+        <button class="btn secondary" onclick="runCustomTool()">
+          <span>&#128269; 3. Call Tool</span>
         </button>
       </div>
 
@@ -499,7 +515,7 @@ CALLBACK_PAGE_HTML = """<!DOCTYPE html>
           setMcpCardActive(true);
           runMcpRequest('tools/list', {});
         } else {
-          authBox.textContent = 'No active session found. Click "New Sign-In" above to authenticate with Metaview.';
+          authBox.textContent = 'No active session found. Click "New Sign-In" above to authenticate with __UPSTREAM_NAME__.';
           authBox.style.color = '#fbbf24';
         }
       } catch (err) {
@@ -585,8 +601,8 @@ CALLBACK_PAGE_HTML = """<!DOCTYPE html>
       const timeLabel = document.getElementById('responseTimeLabel');
 
       area.classList.add('visible');
-      statusLabel.textContent = 'Calling Metaview MCP method: ' + method + '...';
-      box.textContent = 'Contacting upstream https://mcp.metaview.ai/mcp...';
+      statusLabel.textContent = 'Calling __UPSTREAM_NAME__ MCP method: ' + method + '...';
+      box.textContent = 'Contacting upstream __UPSTREAM_MCP_URL__...';
       timeLabel.textContent = '';
 
       const t0 = performance.now();
@@ -645,23 +661,31 @@ CALLBACK_PAGE_HTML = """<!DOCTYPE html>
       }
     }
 
-    function runGetUserContext() {
-      runMcpRequest('tools/call', {
-        name: 'get_user_context',
-        arguments: {
-          rationale: 'Initial identity and workspace verification for Bruce'
-        }
+    function runInitialize() {
+      runMcpRequest('initialize', {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'ge-mcp-auth-proxy-console', version: '1.0.0' }
       });
     }
 
-    function runSampleSearch() {
-      runMcpRequest('tools/call', {
-        name: 'search_conversations',
-        arguments: {
-          rationale: 'Search recent interviews and calls in workspace',
-          limit: 10
+    function runCustomTool() {
+      const name = document.getElementById('toolNameInput').value.trim();
+      if (!name) {
+        alert('Enter a tool name. Run tools/list first to see what this provider exposes.');
+        return;
+      }
+      let args = {};
+      const raw = document.getElementById('toolArgsInput').value.trim();
+      if (raw) {
+        try {
+          args = JSON.parse(raw);
+        } catch (e) {
+          alert('Arguments must be valid JSON: ' + e.message);
+          return;
         }
-      });
+      }
+      runMcpRequest('tools/call', { name: name, arguments: args });
     }
   </script>
 </body>
@@ -737,6 +761,8 @@ async def test_console(request: Request):
     )
     html = (
         TEST_PAGE_HTML
+        .replace("__UPSTREAM_NAME__", _upstream_display_name())
+        .replace("__UPSTREAM_MCP_URL__", settings.UPSTREAM_MCP_URL or "not-configured")
         .replace("__PROXY_BASE_URL__", settings.PROXY_BASE_URL)
         .replace("__GCP_PROJECT_ID__", settings.GCP_PROJECT_ID or "not-configured")
         .replace("__AUTH_LINK__", auth_link)
@@ -758,6 +784,8 @@ async def test_callback(request: Request):
     )
     html = (
         CALLBACK_PAGE_HTML
+        .replace("__UPSTREAM_NAME__", _upstream_display_name())
+        .replace("__UPSTREAM_MCP_URL__", settings.UPSTREAM_MCP_URL or "not-configured")
         .replace("__AUTH_LINK__", auth_link)
         .replace("__GCP_PROJECT_ID__", settings.GCP_PROJECT_ID or "not-configured")
     )

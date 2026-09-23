@@ -1,9 +1,10 @@
-"""Tests for vendor-agnostic OAuth proxying, backwards-compatibility, and DCR."""
+"""Tests for vendor-agnostic OAuth proxying, storage schema neutrality, and DCR."""
 
 import json
 from unittest.mock import patch, AsyncMock
 import pytest
 from httpx import Response, Request
+from pydantic import ValidationError
 
 from app.config import settings
 from app.storage.base import UserTokenData, AuthCodeData, OAuthSessionData
@@ -11,68 +12,60 @@ from app.oauth.client import exchange_code_for_tokens
 from app.oauth.dcr import async_register_client, DCRError
 
 
-def test_user_token_data_backwards_compatibility():
-    """Verify UserTokenData transparently handles both legacy metaview_* and new upstream_* fields."""
-    # Test 1: Legacy format dict loaded into model
+def test_stored_token_schema_is_vendor_neutral():
+    """The persisted token schema must not name any specific SaaS vendor.
+
+    These fields are serialised into Secret Manager payloads, so a vendor name
+    here would outlive any config change and follow every customer who deploys
+    the broker against a different provider.
+    """
+    token = UserTokenData(
+        proxy_access_token="ge-tok-888",
+        upstream_access_token="up-access-token",
+        upstream_refresh_token="up-refresh-token",
+        upstream_expires_at=1800000000.0,
+    )
+    dumped = token.model_dump()
+    assert dumped["upstream_access_token"] == "up-access-token"
+    assert dumped["upstream_refresh_token"] == "up-refresh-token"
+    assert dumped["upstream_expires_at"] == 1800000000.0
+    assert not [k for k in dumped if "metaview" in k]
+
+
+def test_vendor_named_token_keys_are_not_accepted():
+    """A payload using the old metaview_* keys must fail loudly, not silently.
+
+    Pydantic drops unknown keys, so without the required upstream_access_token
+    such a payload would otherwise validate into a record holding no upstream
+    credential at all, and the failure would surface much later as a 401 from
+    the provider.
+    """
     legacy_json = json.dumps({
         "proxy_access_token": "ge-tok-999",
         "metaview_access_token": "legacy-access-token",
-        "metaview_refresh_token": "legacy-refresh-token",
-        "metaview_expires_at": 1700000000.0,
     })
-    token_from_legacy = UserTokenData.model_validate_json(legacy_json)
-    assert token_from_legacy.proxy_access_token == "ge-tok-999"
-    assert token_from_legacy.upstream_access_token == "legacy-access-token"
-    assert token_from_legacy.upstream_refresh_token == "legacy-refresh-token"
-    assert token_from_legacy.upstream_expires_at == 1700000000.0
-    assert token_from_legacy.metaview_access_token == "legacy-access-token"
-    assert token_from_legacy.metaview_refresh_token == "legacy-refresh-token"
-
-    # Test 2: New format
-    new_token = UserTokenData(
-        proxy_access_token="ge-tok-888",
-        upstream_access_token="new-access-token",
-        upstream_refresh_token="new-refresh-token",
-        upstream_expires_at=1800000000.0,
-    )
-    assert new_token.metaview_access_token == "new-access-token"
-    assert new_token.metaview_refresh_token == "new-refresh-token"
-    assert new_token.metaview_expires_at == 1800000000.0
-
-    # Test 3: Setter compatibility
-    new_token.metaview_access_token = "updated-access-token"
-    assert new_token.upstream_access_token == "updated-access-token"
+    with pytest.raises(ValidationError):
+        UserTokenData.model_validate_json(legacy_json)
 
 
-def test_session_and_code_data_backwards_compatibility():
-    """Verify AuthCodeData and OAuthSessionData support both legacy and generic verifier keys."""
-    # AuthCodeData with legacy metaview_access_token
-    legacy_code = AuthCodeData.model_validate({
-        "code": "code-123",
-        "metaview_access_token": "mv-token-123",
-        "metaview_refresh_token": "mv-refresh-123",
-    })
-    assert legacy_code.upstream_access_token == "mv-token-123"
-    assert legacy_code.metaview_access_token == "mv-token-123"
-    assert legacy_code.upstream_refresh_token == "mv-refresh-123"
-
-    new_code = AuthCodeData(
+def test_session_and_code_data_use_generic_field_names():
+    """AuthCodeData and OAuthSessionData carry upstream_*, not vendor-named, keys."""
+    code = AuthCodeData(
         code="code-456",
         upstream_access_token="up-token-456",
         upstream_refresh_token="up-refresh-456",
     )
-    assert new_code.metaview_access_token == "up-token-456"
-    assert new_code.metaview_refresh_token == "up-refresh-456"
+    assert code.upstream_access_token == "up-token-456"
+    assert not [k for k in code.model_dump() if "metaview" in k]
 
-    # OAuthSessionData
-    legacy_session = OAuthSessionData.model_validate({
-        "session_id": "sess-123",
-        "google_redirect_uri": "https://vertexaisearch.cloud.google.com/oauth-redirect",
-        "google_state": "state-123",
-        "metaview_code_verifier": "mv-verifier-123",
-    })
-    assert legacy_session.upstream_code_verifier == "mv-verifier-123"
-    assert legacy_session.metaview_code_verifier == "mv-verifier-123"
+    session = OAuthSessionData(
+        session_id="sess-123",
+        google_redirect_uri="https://vertexaisearch.cloud.google.com/oauth-redirect",
+        google_state="state-123",
+        upstream_code_verifier="up-verifier-123",
+    )
+    assert session.upstream_code_verifier == "up-verifier-123"
+    assert not [k for k in session.model_dump() if "metaview" in k]
 
 
 @pytest.mark.asyncio

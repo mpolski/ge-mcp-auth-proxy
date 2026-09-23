@@ -34,6 +34,19 @@ async def lifespan(app: FastAPI):
             "reveal an active user's proxy access token. Never enable this in a "
             "deployed environment."
         )
+    # Refuse to serve with an unconfigured upstream. Booting anyway would publish
+    # working OAuth metadata and only fail once a real user was already mid
+    # sign-in, which is far harder to diagnose than a failed revision. The memory
+    # backend is exempt so unit tests and local experiments can start bare.
+    missing = settings.missing_required_settings()
+    if missing and settings.STORAGE_BACKEND != "memory":
+        raise RuntimeError(
+            "Refusing to start: required settings are unset: "
+            + ", ".join(missing)
+            + ". See .env.example, or deploy with ./deploy.sh."
+        )
+    if missing:
+        logger.warning("Settings unset (allowed with the memory backend): %s", ", ".join(missing))
     # Eagerly initialize storage backend to catch config errors on startup
     storage = get_storage()
     logger.info("Storage initialized successfully: %s", type(storage).__name__)
@@ -45,8 +58,8 @@ app = FastAPI(
     title=f"Gemini Enterprise MCP Identity Broker Proxy ({settings.UPSTREAM_SERVICE_NAME})",
     description=(
         "Enterprise broker proxy providing per-user OAuth 2.0 3-legged authentication "
-        "and MCP request translation between Gemini Enterprise and upstream MCP services "
-        "(Metaview, Greenhouse, Carta, etc.)."
+        "and MCP request translation between Gemini Enterprise and an OAuth-secured "
+        "upstream MCP service."
     ),
     version="1.0.0",
     lifespan=lifespan,
