@@ -40,7 +40,13 @@ def setup_telemetry(app: FastAPI, custom_exporter: Optional[SpanExporter] = None
         )
 
         import os
-        service_name = os.environ.get("K_SERVICE", "metaview-identity-proxy")
+
+        # K_SERVICE is injected by Cloud Run. The fallback is only used off-platform
+        # (local runs, tests), so it is derived from the configured vendor rather than
+        # naming any one deployment.
+        service_name = os.environ.get(
+            "K_SERVICE", f"ge-{settings.UPSTREAM_SERVICE_NAME}-proxy"
+        )
         project_number = settings.GCP_PROJECT_NUMBER or settings.GCP_PROJECT_ID or "unknown"
         mcp_server_urn = os.environ.get(
             "MCP_SERVER_URN",
@@ -122,6 +128,6 @@ def setup_telemetry(app: FastAPI, custom_exporter: Optional[SpanExporter] = None
     return _provider
 
 
-def get_tracer(name: str = "metaview_proxy") -> trace.Tracer:
+def get_tracer(name: str = "mcp_identity_broker") -> trace.Tracer:
     """Return an OpenTelemetry Tracer instance."""
     return trace.get_tracer(name)

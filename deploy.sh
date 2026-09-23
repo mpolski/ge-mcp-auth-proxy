@@ -21,21 +21,10 @@ PROJECT_ID="${GCP_PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || t
 REGION="${GCP_REGION:-us-central1}"
 
 # Service naming (one Cloud Run service per vendor for failure domain isolation)
-if [[ "${VENDOR}" == "metaview" && -n "${SERVICE_NAME:-}" ]]; then
-    SERVICE_NAME="${SERVICE_NAME}"
-elif [[ "${VENDOR}" == "metaview" ]]; then
-    SERVICE_NAME="${SERVICE_NAME:-metaview-identity-proxy}"
-else
-    SERVICE_NAME="${SERVICE_NAME:-ge-${VENDOR}-proxy}"
-fi
+SERVICE_NAME="${SERVICE_NAME:-ge-${VENDOR}-proxy}"
 
 SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:-${VENDOR}-proxy-sa}"
 CUSTOM_ROLE_ID="${CUSTOM_ROLE_ID:-geminiMcpProxyTokenStore}"
-
-# Re-use existing custom role if present
-if gcloud iam roles describe "metaviewProxyTokenStore" --project="${PROJECT_ID}" &>/dev/null; then
-    CUSTOM_ROLE_ID="metaviewProxyTokenStore"
-fi
 
 # Secret Manager secret names holding static configuration credentials
 GE_SECRET_NAME="${GE_SECRET_NAME:-ge-${VENDOR}-client-secret}"

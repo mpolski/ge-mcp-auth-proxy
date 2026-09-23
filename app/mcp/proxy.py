@@ -66,7 +66,7 @@ def _mcp_server_urn() -> str:
     if explicit:
         return explicit
 
-    service_name = os.environ.get("K_SERVICE", f"{settings.UPSTREAM_SERVICE_NAME}-identity-proxy")
+    service_name = os.environ.get("K_SERVICE", f"ge-{settings.UPSTREAM_SERVICE_NAME}-proxy")
     project_number = settings.GCP_PROJECT_NUMBER or settings.GCP_PROJECT_ID or "unknown"
     return (
         f"urn:mcp:projects-{project_number}:projects:{project_number}"
